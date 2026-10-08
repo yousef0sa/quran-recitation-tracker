@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>قياس التتبع على تسجيلاتك</title>
+    <link rel="stylesheet" href="./src/ui.css" />
+  </head>
+  <body>
+    <main>
+      <h1>قياس التأخر والدقة على تسجيلاتك</h1>
+      <nav>
+        <a href="./index.html">مباشر</a>
+        <a href="./label.html">التعليم</a>
+        <a href="./bench.html">القياس</a>
+      </nav>
+
+      <div class="controls">
+        <label>التسجيلات: <input id="recordings" type="file" accept="audio/*" multiple /></label>
+        <label>ملفات التعليم: <input id="labels" type="file" accept=".json,application/json" multiple /></label>
+      </div>
+      <div class="controls">
+        <label>
+          النسخة:
+          <select id="variant">
+            <option value="A1">A1</option>
+            <option value="A2">A2</option>
+            <option value="B1">B1</option>
+            <option value="B2">B2</option>
+          </select>
+        </label>
+        <label>
+          حجم القطعة:
+          <select id="chunk">
+            <option value="80">80 ms</option>
+            <option value="150" selected>150 ms</option>
+            <option value="300">300 ms</option>
+          </select>
+        </label>
+        <button id="run" class="primary">شغّل</button>
+        <button id="download-results" disabled>تنزيل results.json</button>
+        <button id="download-logs" disabled>تنزيل السجلات (EventLog)</button>
+      </div>
+
+      <div id="status" class="status" role="status">اختر التسجيلات وملفات تعليمها (اسم التعليم: &lt;اسم التسجيل&gt;.labels.json) ثم اضغط «شغّل».</div>
+      <p class="note ltr">
+        Each recording is fed in fixed chunks back-to-back, then 2.0 s of zeros as ordinary chunks, then stop().
+        The padding counts toward audio duration and RTF. Latency is audio-time based, so it does not depend on CPU speed.
+      </p>
+
+      <div id="output"></div>
+    </main>
+    <script type="module" src="./src/bench.ts"></script>
+  </body>
+</html>

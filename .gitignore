@@ -1,0 +1,34 @@
+node_modules/
+dist/
+spike/public/models/
+spike/public/data/
+spike/recordings/
+spike/results/
+
+# Claude Code files (local only)
+.claude/
+CLAUDE.md
+
+# Safety net: never commit secrets, models, audio or local junk
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.onnx
+*.part
+*.log
+*.map
+*.wav
+*.mp3
+*.m4a
+*.aac
+*.ogg
+*.opus
+*.flac
+*.webm
+.DS_Store
+Thumbs.db

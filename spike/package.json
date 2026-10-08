@@ -1,0 +1,25 @@
+{
+  "name": "quran-recitation-spike",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "fetch-assets": "node scripts/fetch-assets.mjs"
+  },
+  "dependencies": {
+    "@tilawa/core": "0.4.0",
+    "onnxruntime-web": "1.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.4",
+    "typescript": "5.9.3",
+    "vite": "7.3.7",
+    "vitest": "4.1.11"
+  }
+}

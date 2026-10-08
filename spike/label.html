@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>تعليم نهايات الكلمات</title>
+    <link rel="stylesheet" href="./src/ui.css" />
+  </head>
+  <body>
+    <main>
+      <h1>تعليم نهاية كل كلمة في التسجيل</h1>
+      <nav>
+        <a href="./index.html">مباشر</a>
+        <a href="./label.html">التعليم</a>
+        <a href="./bench.html">القياس</a>
+      </nav>
+
+      <div class="controls">
+        <input id="file" type="file" accept="audio/*" />
+        <label>
+          السرعة:
+          <select id="rate">
+            <option value="0.5" selected>0.5×</option>
+            <option value="0.75">0.75×</option>
+            <option value="1">1×</option>
+          </select>
+        </label>
+        <button id="play" disabled>تشغيل / إيقاف مؤقت</button>
+        <button id="undo" disabled>تراجع (Backspace)</button>
+        <button id="download" class="primary" disabled>تنزيل labels.json</button>
+      </div>
+
+      <audio id="audio" controls style="width: 100%"></audio>
+
+      <div id="status" class="status" role="status">اختر ملف تسجيل. اضغط المسافة (Space) عند نهاية كل كلمة، و Backspace للتراجع.</div>
+
+      <div id="words" class="quran" aria-live="off"></div>
+      <p id="marks" class="marks"></p>
+      <p class="note">
+        زمن الضغط يتأخر عادةً 100–250 ms عن نهاية الكلمة؛ علّم بسرعة 0.5× وسيبقى هذا التحيّز نفسه لكل النسخ المقارَنة.
+        / Tap reaction adds ~100-250 ms of bias; label at 0.5x. It is the same for every variant.
+      </p>
+    </main>
+    <script type="module" src="./src/label.ts"></script>
+  </body>
+</html>

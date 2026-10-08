@@ -1,0 +1,67 @@
+{
+  "assets": [
+    {
+      "id": "a0w-model",
+      "url": "https://github.com/yazinsai/tilawa/releases/download/zipformer-a0w-ep1-a0.5/zipformer_a0w_ep1_a05.int8.onnx",
+      "dest": "public/models/zipformer_a0w_ep1_a05.int8.onnx",
+      "size": 69246033,
+      "sha256": "bfb5b712695634a6099b45a6a78003bd5103417c4eae6338277d54679254905a"
+    },
+    {
+      "id": "a0w-io",
+      "url": "https://github.com/yazinsai/tilawa/releases/download/zipformer-a0w-ep1-a0.5/zipformer_a0w_ep1_a05.io.json",
+      "dest": "public/models/zipformer_a0w_ep1_a05.io.json",
+      "size": 26867,
+      "sha256": "7dca1dafd6ee26044a0d3ba6b9483278203f55df7cc95d40cda865183a0d797e"
+    },
+    {
+      "id": "v3-c16-model",
+      "url": "https://huggingface.co/halawanyAi/natlu-zipformer-p-arabic-v3-c16/resolve/df8ec413aea3e0ec0e69fc816889f0dbf4aa91a3/zipformer_p_arabic_v3_c16.int8.onnx",
+      "dest": "public/models/zipformer_p_arabic_v3_c16.int8.onnx",
+      "size": 72705335,
+      "sha256": "a6c4c2eac7b996598d20e8cd6f5d8e879bb2c71727294fb08deadaffaddce7ca"
+    },
+    {
+      "id": "corpus",
+      "url": "https://github.com/yazinsai/tilawa/releases/download/v0.3.0/zipformer_quran.json",
+      "dest": "public/data/zipformer_quran.json",
+      "size": 5453439,
+      "sha256": "24360c05ec88fcacf3419c1fe6cd81d69e653326a0bf0e4fb507e7b98fc88127"
+    },
+    {
+      "id": "tilawa-notice-models",
+      "url": "https://raw.githubusercontent.com/yazinsai/tilawa/2f2617460dc4a6b967e0cc49fa04804bbf22ec69/NOTICE.md",
+      "dest": "public/models/tilawa-NOTICE.md",
+      "size": 3218,
+      "sha256": "8fe7d583d3dbe637cf72d6159bfe5f650dd6f7733deb976a6b57fccfaaa504a1"
+    },
+    {
+      "id": "tilawa-license-models",
+      "url": "https://raw.githubusercontent.com/yazinsai/tilawa/2f2617460dc4a6b967e0cc49fa04804bbf22ec69/LICENSE",
+      "dest": "public/models/tilawa-LICENSE",
+      "size": 1065,
+      "sha256": "aaba1020f09b4d3798b1d6965d7ead0c0ddbaf5252a949fa5cc8120c2b8f27e5"
+    },
+    {
+      "id": "mirror-license-models",
+      "url": "https://huggingface.co/halawanyAi/natlu-zipformer-p-arabic-v3-c16/resolve/df8ec413aea3e0ec0e69fc816889f0dbf4aa91a3/LICENSE",
+      "dest": "public/models/natlu-zipformer-p-arabic-v3-c16-LICENSE",
+      "size": 7041,
+      "sha256": "77526bdbfac94132e5114c3a34492c33f915e4b7f310f00b9995500d3610cab5"
+    },
+    {
+      "id": "tilawa-notice-data",
+      "url": "https://raw.githubusercontent.com/yazinsai/tilawa/2f2617460dc4a6b967e0cc49fa04804bbf22ec69/NOTICE.md",
+      "dest": "public/data/tilawa-NOTICE.md",
+      "size": 3218,
+      "sha256": "8fe7d583d3dbe637cf72d6159bfe5f650dd6f7733deb976a6b57fccfaaa504a1"
+    },
+    {
+      "id": "tilawa-license-data",
+      "url": "https://raw.githubusercontent.com/yazinsai/tilawa/2f2617460dc4a6b967e0cc49fa04804bbf22ec69/LICENSE",
+      "dest": "public/data/tilawa-LICENSE",
+      "size": 1065,
+      "sha256": "aaba1020f09b4d3798b1d6965d7ead0c0ddbaf5252a949fa5cc8120c2b8f27e5"
+    }
+  ]
+}

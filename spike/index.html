@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>تجربة تتبع الفاتحة</title>
+    <link rel="stylesheet" href="./src/ui.css" />
+  </head>
+  <body>
+    <main>
+      <h1>تتبع تلاوة سورة الفاتحة (تجربة)</h1>
+      <nav>
+        <a href="./index.html">مباشر</a>
+        <a href="./label.html">التعليم</a>
+        <a href="./bench.html">القياس</a>
+      </nav>
+
+      <div class="controls">
+        <button id="start" class="primary" disabled>ابدأ</button>
+        <button id="stop" disabled>أوقف</button>
+        <label>
+          النسخة:
+          <select id="variant">
+            <option value="A1">A1</option>
+            <option value="A2">A2</option>
+            <option value="B1">B1</option>
+            <option value="B2">B2</option>
+          </select>
+        </label>
+        <button id="download" disabled>تنزيل السجل</button>
+      </div>
+
+      <div id="status" class="status" role="status">جارٍ التحضير…</div>
+
+      <div class="stats">
+        <div>تحميل النموذج (ms)<b id="stat-load">-</b></div>
+        <div>الحساب p50 / p95 (ms)<b id="stat-compute">-</b></div>
+        <div>RTF<b id="stat-rtf">-</b></div>
+        <div>التأخر الحي p50 / p95 (ms)<b id="stat-lag">-</b></div>
+        <div>النسخة / الخلفية<b id="stat-backend" class="ltr">-</b></div>
+      </div>
+
+      <div id="words" class="quran" aria-live="off"></div>
+
+      <p class="disclaimer">قد يخطئ التطبيق، ولا يغني أبداً عن الشيخ</p>
+    </main>
+    <script type="module" src="./src/live.ts"></script>
+  </body>
+</html>
