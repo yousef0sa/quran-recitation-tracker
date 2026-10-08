@@ -17,7 +17,9 @@
     "onnxruntime-web": "1.24.2"
   },
   "devDependencies": {
+    "@e2e-dev/web": "0.13.0",
     "@types/node": "26.6.4",
+    "e2e": "0.18.0",
     "typescript": "5.9.3",
     "vite": "7.3.7",
     "vitest": "4.1.11"
