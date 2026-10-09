@@ -24,9 +24,9 @@ jobs:
       E2E_TELEMETRY_DISABLED: "1"
       DO_NOT_TRACK: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7.0.0
         with:
           node-version: 24
           cache: npm
@@ -37,7 +37,7 @@ jobs:
       # Model and corpus are NPL-1.2: downloaded from their sources and SHA-256 checked,
       # kept only in the runner and the Actions cache, never uploaded as an artifact.
       - name: Cache model and corpus
-        uses: actions/cache@v4
+        uses: actions/cache@v6.1.0
         with:
           path: |
             spike/public/models
@@ -60,7 +60,7 @@ jobs:
       # Only the JSON report: traces and screenshots can contain the NPL assets.
       - name: Upload e2e report
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: e2e-report
           path: spike/.e2e/report.json
