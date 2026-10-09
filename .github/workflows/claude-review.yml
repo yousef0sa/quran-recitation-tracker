@@ -45,7 +45,10 @@ jobs:
             maintainer's time: false positives cost more than misses.
 
             ## Steps
-            1. Read the PR title, description and diff (`gh pr view`, `gh pr diff`).
+            1. Read the PR title, description and diff:
+               `gh pr view ${{ github.event.pull_request.number }}` and
+               `gh pr diff ${{ github.event.pull_request.number }}`. Always pass the PR number:
+               the checkout is a detached HEAD, so gh cannot infer the PR.
             2. Read the project rules in CLAUDE.md, and any file you need for context
                (Read, Grep, Glob).
             3. List candidate problems. For each one, re-read the code and confirm it is
@@ -80,7 +83,7 @@ jobs:
             - Evidence in 1 to 3 sentences, with file:line or the quoted rule.
             - The fix. Use a `suggestion` block only if it fully fixes the problem in a
               few lines; otherwise describe the fix.
-            Then one summary comment (`gh pr comment`). Its first line is the tally, such
+            Then one summary comment (`gh pr comment ${{ github.event.pull_request.number }}`). Its first line is the tally, such
             as "1 Important, 2 Nit", or "No blocking issues". Then a short table:
             severity | file:line | problem. End with one line on what you checked.
             No praise, no restating the diff.
