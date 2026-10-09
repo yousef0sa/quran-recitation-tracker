@@ -10,10 +10,11 @@ concurrency:
 
 jobs:
   review:
-    # Skip drafts, and PRs from forks (they get no secrets).
+    # Skip drafts, PRs from forks and Dependabot PRs (neither gets repo secrets).
     if: >-
       github.event.pull_request.draft == false &&
-      github.event.pull_request.head.repo.full_name == github.repository
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     # Read the code and comment on the PR; never push.
