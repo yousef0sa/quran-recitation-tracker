@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  spike:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: spike
+    env:
+      # Nothing leaves the runner: e2e telemetry off.
+      E2E_TELEMETRY_DISABLED: "1"
+      DO_NOT_TRACK: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: spike/package-lock.json
+
+      - run: npm ci
+
+      # Model and corpus are NPL-1.2: downloaded from their sources and SHA-256 checked,
+      # kept only in the runner and the Actions cache, never uploaded as an artifact.
+      - name: Cache model and corpus
+        uses: actions/cache@v4
+        with:
+          path: |
+            spike/public/models
+            spike/public/data
+          key: assets-${{ hashFiles('spike/scripts/assets.json') }}
+
+      - run: npm run fetch-assets
+
+      - name: assets.json unchanged
+        run: git diff --exit-code -- scripts/assets.json
+
+      - run: npm run typecheck
+
+      - run: npm test
+
+      - run: npx @e2e-dev/web install chromium --with-deps
+
+      - run: npm run test:e2e
+
+      # Only the JSON report: traces and screenshots can contain the NPL assets.
+      - name: Upload e2e report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-report
+          path: spike/.e2e/report.json
+          retention-days: 7
