@@ -1,0 +1,8 @@
+{
+  // Type-checks the e2e tests and config: Node (fixtures write files) plus the DOM (page callbacks).
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": ["./**/*.ts", "../e2e.config.ts"]
+}

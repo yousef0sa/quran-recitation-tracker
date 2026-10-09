@@ -32,3 +32,7 @@ CLAUDE.md
 *.webm
 .DS_Store
 Thumbs.db
+
+# e2e output and generated test inputs
+spike/.e2e/
+spike/tests/.generated/

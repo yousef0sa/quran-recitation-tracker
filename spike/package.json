@@ -8,9 +8,10 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tests",
     "test": "vitest run",
-    "fetch-assets": "node scripts/fetch-assets.mjs"
+    "fetch-assets": "node scripts/fetch-assets.mjs",
+    "test:e2e": "e2e run"
   },
   "dependencies": {
     "@tilawa/core": "0.4.0",
