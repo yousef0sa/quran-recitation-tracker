@@ -50,7 +50,7 @@ export function renderWords(box: HTMLElement, words: readonly string[] | null): 
   return nodes;
 }
 
-/** Labels the variant options and selects the one named by `?variant=` (default A1); returns it. */
+/** Labels the variant options and selects the one named by `?variant=` (default B2); returns it. */
 export function initVariantSelect(select: HTMLSelectElement): VariantId {
   for (const id of VARIANT_IDS) {
     const option = [...select.options].find((o) => o.value === id);

@@ -14,7 +14,7 @@
 | `navigator.hardwareConcurrency` | 8 |
 | Recordings | 5 correct readings of Al-Fatiha by the maintainer, no isti'adha, no restarts: `1.aac` 37.7 s, `2.aac` 48.0 s, `3.aac` 39.1 s, `4.aac` 42.4 s (AAC stereo), `5.ogg` 31.0 s (phone voice message, Opus mono, slight clipping) |
 | Labelling | tap labels at 0.5× by the maintainer. Taps land late, so true latency is ~50–125 ms **higher** than measured (same for all variants) |
-| Chunk size(s) | 150 ms (all variants), 80 ms (B1, B2; bench feed only, the live page's worklet is fixed at 150 ms) |
+| Chunk size(s) | 150 ms (all variants), 80 ms (B1, B2; bench feed only at measurement time; the live page has used 80 ms by default since 2026-10-10) |
 | Asset hashes | `scripts/assets.json` as of 2026-10-08 |
 | Raw data | `spike/results/*_results.json` + `*_eventlogs.json` (git-ignored) |
 
@@ -69,13 +69,15 @@ Variants: A = tilawa default model a0w (T=61, hop 480 ms); B = raw Quran-Lab v3 
 
 ## Decision criteria
 
+As planned before the run. Latency was later redefined as confirm latency (see the decision below).
+
 - **GO**: cursor latency p50 <= 500 ms, >= 95 % of words tracked, RTF <= 0.3.
 - **ADJUST**: p50 between 500 and 1000 ms, or 90–95 % tracked.
 - **NO-GO**: p50 > 1000 ms, < 90 % tracked, or RTF > 0.8.
 
 ## Decision — GO (approved by the maintainer, 2026-10-08)
 
-**Best variant: B2 @ 80 ms** (raw Quran-Lab v3 c16 + correction mode + expected Al-Fatiha). The 80 ms is the chunk size of the bench feed only; the live page's worklet is fixed at 150 ms today.
+**Best variant: B2 @ 80 ms** (raw Quran-Lab v3 c16 + correction mode + expected Al-Fatiha). The 80 ms was measured with the bench feed; the live page now runs 80 ms by default (follow-up 5).
 
 | Criterion | B2 @ 80 ms | Verdict |
 |---|---|---|
@@ -88,8 +90,8 @@ Variants: A = tilawa default model a0w (T=61, hop 480 ms); B = raw Quran-Lab v3 
 Reason: the cursor was chosen as the metric only because research expected it to be the earliest signal; the data shows the green highlight is ~2× earlier and is what the reciter actually sees. If the original cursor-advance metric is kept, the result is **ADJUST**.
 
 Conditions / follow-ups:
-1. Define latency in the project documentation as "end of word → word shown as confirmed (green)".
+1. ✅ Define latency in the project documentation as "end of word → word shown as confirmed (green)". Done: PRD success metrics and decision log, `README.md` column definitions (2026-10-10).
 2. Check on a mid-range phone (the success criterion covers laptop **and** phone; this run is a fast desktop — latency is CPU-independent, RTF is not).
 3. Investigate word 17 (1:6, word 1) never confirming (2/5) and the ayah-end p95.
 4. Live-test B2 once to confirm the feel.
-5. Use 80 ms chunks in the live page (the worklet and `CHUNK_SAMPLES` are fixed at 150 ms today; the 80 ms results come from the bench feed only).
+5. ✅ Use 80 ms chunks in the live page. Done: the live page defaults to 80 ms and B2, selectable with `?chunk=80|150|300`; the chunk size is defined only in `src/audio.ts` and reaches the worklet via `processorOptions` (2026-10-10).

@@ -1,6 +1,13 @@
 // Offline benchmark: feeds your recordings to the worker in fixed chunks, builds an
 // EventLog per file and computes latency / accuracy metrics against the labels.
-import { TARGET_RATE, decodeFileTo16kMono, splitIntoChunks } from "./audio";
+import {
+  CHUNK_MS_OPTIONS,
+  DEFAULT_CHUNK_MS,
+  TARGET_RATE,
+  chunkSamplesForMs,
+  decodeFileTo16kMono,
+  splitIntoChunks,
+} from "./audio";
 import {
   BACKEND_LABEL,
   baseName,
@@ -68,6 +75,11 @@ const recordingsInput = el<HTMLInputElement>("recordings");
 const labelsInput = el<HTMLInputElement>("labels");
 const variantSelect = el<HTMLSelectElement>("variant");
 const chunkSelect = el<HTMLSelectElement>("chunk");
+for (const ms of CHUNK_MS_OPTIONS) {
+  const option = new Option(`${ms} ms`, String(ms));
+  option.selected = ms === DEFAULT_CHUNK_MS;
+  chunkSelect.append(option);
+}
 const runButton = el<HTMLButtonElement>("run");
 const resultsButton = el<HTMLButtonElement>("download-results");
 const logsButton = el<HTMLButtonElement>("download-logs");
@@ -258,7 +270,7 @@ async function run(recordings: File[], labelFiles: File[]): Promise<RunResult | 
   }
   const variantId = parseVariantId(variantSelect.value);
   const chunkMs = Number(chunkSelect.value);
-  const chunkSamples = Math.round((chunkMs * TARGET_RATE) / 1000);
+  const chunkSamples = chunkSamplesForMs(chunkMs);
 
   runButton.disabled = true;
   resultsButton.disabled = true;

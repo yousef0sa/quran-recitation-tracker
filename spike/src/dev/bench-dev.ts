@@ -1,6 +1,7 @@
 // Dev-only bench additions: use spike/recordings without file pickers, and URL autorun
 // (bench.html?autorun=1&variant=A1&chunk=150). Loaded via a dynamic import behind
 // `import.meta.env.DEV` in bench.ts.
+import { CHUNK_MS_OPTIONS } from "../audio";
 import { errorMessage } from "../common";
 import { fetchLabelsFile, fetchRecordingFile, listRecordings, postResult, resultFileName } from "./dev-api";
 import { isVariantId } from "../variants";
@@ -79,7 +80,7 @@ export function initBenchDev<R>(host: BenchDevHost<R>): void {
       const chunk = params.get("chunk");
       if (chunk !== null) {
         if (![...host.chunkSelect.options].some((o) => o.value === chunk)) {
-          throw new Error(`unsupported chunk "${chunk}" (use 80, 150 or 300)`);
+          throw new Error(`unsupported chunk "${chunk}" (use ${CHUNK_MS_OPTIONS.join(", ")})`);
         }
         host.chunkSelect.value = chunk;
       }

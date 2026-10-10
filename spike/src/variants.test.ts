@@ -45,9 +45,11 @@ describe("variants", () => {
     });
     expect(VARIANTS.B1).toMatchObject({ stretch: true, io: { T: 45, hop: 32 } });
   });
-  it("parseVariantId defaults to A1", () => {
-    expect(parseVariantId(null)).toBe(DEFAULT_VARIANT);
-    expect(parseVariantId("nope")).toBe("A1");
+  it("parseVariantId defaults to B2", () => {
+    expect(DEFAULT_VARIANT).toBe("B2");
+    expect(parseVariantId(null)).toBe("B2");
+    expect(parseVariantId("nope")).toBe("B2");
+    expect(parseVariantId("A1")).toBe("A1");
     expect(parseVariantId("B1")).toBe("B1");
     expect(parseVariantId("A2")).toBe("A2");
     expect(parseVariantId("B2")).toBe("B2");

@@ -1,29 +1,34 @@
-// AudioWorklet: mono capture -> 16 kHz -> 150 ms chunks posted to the main thread.
+// AudioWorklet: mono capture -> 16 kHz -> fixed-size chunks posted to the main thread.
+// The chunk size is not defined here: src/audio.ts passes it as processorOptions.chunkSamples.
 // The resampler is the same algorithm as src/resample.ts (worklets cannot import app modules):
 // keep the two in sync. Continuous phase across blocks matters; a stateless per-block
 // resampler drifts the tempo.
 
 const TARGET_RATE = 16000;
-const CHUNK_SAMPLES = 2400; // 150 ms at 16 kHz; keep equal to CHUNK_SAMPLES in src/audio.ts and CHUNK_MS in src/live.ts
 
 class SpikeAudioProcessor extends AudioWorkletProcessor {
-  constructor() {
+  constructor(options) {
     super();
+    const chunkSamples = options && options.processorOptions && options.processorOptions.chunkSamples;
+    if (!Number.isInteger(chunkSamples) || chunkSamples <= 0) {
+      throw new Error("spike-audio-processor: processorOptions.chunkSamples must be a positive integer");
+    }
+    this.chunkSamples = chunkSamples;
     this.step = sampleRate / TARGET_RATE; // `sampleRate` is the AudioContext rate (worklet global)
     this.passthrough = sampleRate === TARGET_RATE;
     this.pos = 0; // next output position in input coordinates, relative to the current block
     this.prev = 0; // last sample of the previous block (index -1)
-    this.buffer = new Float32Array(CHUNK_SAMPLES);
+    this.buffer = new Float32Array(this.chunkSamples);
     this.filled = 0;
   }
 
   push(sample) {
     this.buffer[this.filled++] = sample;
-    if (this.filled === CHUNK_SAMPLES) {
+    if (this.filled === this.chunkSamples) {
       const chunk = this.buffer;
       // contextTime: AudioContext time (s) at the end of the render quantum that completed the chunk.
       this.port.postMessage({ samples: chunk, contextTime: currentTime }, [chunk.buffer]);
-      this.buffer = new Float32Array(CHUNK_SAMPLES);
+      this.buffer = new Float32Array(this.chunkSamples);
       this.filled = 0;
     }
   }
