@@ -16,11 +16,11 @@ import type { WorkerToMain } from "./messages";
 import { entryFromEvents, flushEntryFromStopped, summarize, type EventLog } from "./metrics";
 import { INITIAL_PROGRESS, updateProgress, type ProgressState } from "./progress";
 import { TrackerClient } from "./tracker-client";
-import { backendLabel, defaultThreads, parseThreads } from "./wasm-threads";
+import { backendLabel, requestThreads } from "./wasm-threads";
 
 const query = new URLSearchParams(location.search);
 const chunkMs = parseChunkMs(query.get("chunk"));
-const requestedThreads = parseThreads(query.get("threads"), defaultThreads(navigator.userAgent, import.meta.env.DEV));
+const requestedThreads = requestThreads(query.get("threads"), navigator.userAgent, import.meta.env.DEV);
 
 const variantSelect = el<HTMLSelectElement>("variant");
 const variantId = initVariantSelect(variantSelect);
