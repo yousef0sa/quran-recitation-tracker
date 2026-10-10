@@ -6,6 +6,7 @@ import {
   backendLabel,
   defaultThreads,
   parseThreads,
+  requestThreads,
   threadsFileSuffix,
   threadsStatusPart,
 } from "./wasm-threads";
@@ -26,16 +27,26 @@ describe("parseThreads", () => {
 describe("defaultThreads", () => {
   const android = "Mozilla/5.0 (Linux; Android 9; Redmi Note 8) AppleWebKit/537.36 Chrome/138.0.0.0 Mobile Safari/537.36";
 
-  it("uses PHONE_THREADS on phones and DEFAULT_THREADS elsewhere on the dev server", () => {
+  const desktop = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/153.0.0.0 Safari/537.36";
+
+  it("uses PHONE_THREADS on phones and DEFAULT_THREADS elsewhere", () => {
     expect(PHONE_THREADS).toBe(4);
-    expect(defaultThreads(android, true)).toBe(4);
-    expect(defaultThreads("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148", true)).toBe(4);
-    expect(defaultThreads("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/153.0.0.0 Safari/537.36", true)).toBe(1);
-    expect(defaultThreads("", true)).toBe(1);
+    expect(defaultThreads(android)).toBe(4);
+    expect(defaultThreads("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148")).toBe(4);
+    expect(defaultThreads(desktop)).toBe(1);
+    expect(defaultThreads("")).toBe(1);
   });
 
-  it("stays on 1 thread in a production build, where more threads hang at load", () => {
-    expect(defaultThreads(android, false)).toBe(1);
+  it("requestThreads honours ?threads= and the device default on the dev server", () => {
+    expect(requestThreads(null, android, true)).toBe(4);
+    expect(requestThreads("2", desktop, true)).toBe(2);
+    expect(requestThreads("3", desktop, true)).toBe(1);
+  });
+
+  it("requestThreads stays on 1 in a production build, even with ?threads=, where more threads hang at load", () => {
+    expect(requestThreads(null, android, false)).toBe(1);
+    expect(requestThreads("4", android, false)).toBe(1);
+    expect(requestThreads("2", desktop, false)).toBe(1);
   });
 
   it("is the fallback of parseThreads", () => {

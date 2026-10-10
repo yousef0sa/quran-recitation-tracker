@@ -34,7 +34,7 @@ import {
 } from "./metrics";
 import { TrackerClient } from "./tracker-client";
 import { parseVariantId, type VariantId } from "./variants";
-import { backendLabel, defaultThreads, parseThreads, threadsStatusPart, type Threads } from "./wasm-threads";
+import { backendLabel, requestThreads, threadsStatusPart, type Threads } from "./wasm-threads";
 
 /** Seconds of zeros fed as ordinary chunks before stop(), so the last word's confirmation has a precise timestamp. */
 const TAIL_PADDING_SEC = 2.0;
@@ -106,13 +106,18 @@ const settleIgnoredNote =
     ? `قيمة settle غير صالحة (${settleParam}): استُخدمت قيمة tilawa الافتراضية / invalid settle ignored, tilawa default used`
     : null;
 
-/** `?threads=`: absent or invalid uses the device default (4 on a phone, else 1); invalid is noted in the run. */
+/**
+ * `?threads=`: absent or invalid uses the device default (4 on a phone, else 1); a production build always uses 1.
+ * An ignored value is noted in the run.
+ */
 const threadsParam = new URLSearchParams(location.search).get("threads");
-const requestedThreads = parseThreads(threadsParam, defaultThreads(navigator.userAgent, import.meta.env.DEV));
+const requestedThreads = requestThreads(threadsParam, navigator.userAgent, import.meta.env.DEV);
 const threadsIgnoredNote =
-  threadsParam !== null && String(requestedThreads) !== threadsParam
-    ? `قيمة threads غير صالحة (${threadsParam}): استُخدم العدد الافتراضي ${requestedThreads} / invalid threads ignored, default ${requestedThreads} used`
-    : null;
+  threadsParam === null || String(requestedThreads) === threadsParam
+    ? null
+    : import.meta.env.DEV
+      ? `قيمة threads غير صالحة (${threadsParam}): استُخدم العدد الافتراضي ${requestedThreads} / invalid threads ignored, default ${requestedThreads} used`
+      : `نسخة البناء تعمل بخيط واحد، تجوهلت threads=${threadsParam} / production build runs 1 thread, threads=${threadsParam} ignored`;
 
 /** " | settleFrames=12" when an override is set, else "". */
 function engineLabel(engine: EngineOverride): string {
