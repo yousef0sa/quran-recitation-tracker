@@ -4,6 +4,8 @@
 //   GET  /__dev/recordings                list audio files in spike/recordings/
 //   GET  /__dev/recordings/<name>         serve one of them
 //   GET  /__dev/labels/<base>             spike/recordings/<base>.labels.json or 404
+//   The three GETs above accept ?dir=<name> to read ONE subfolder of spike/recordings/ instead (name per
+//   RECORDINGS_DIR_PATTERN, else 400; missing folder 404). POST /__dev/labels stays top-level only.
 //   POST /__dev/labels/<base>             validate (parseLabels) and write it; 409 unless ?overwrite=1
 //                                         (an overwrite first keeps the previous file as <base>.labels.json.bak)
 //   POST /__dev/results/<file>.json       write spike/results/<file>.json, append-only (numeric suffix on clash)
@@ -15,6 +17,7 @@ import { copyFile, mkdir, readdir, readFile, rename, stat, writeFile } from "nod
 import { resolve, sep } from "node:path";
 import { pipeline } from "node:stream";
 import type { Plugin } from "vite";
+import { isValidRecordingsDir } from "../src/dev/recordings-dir";
 import { parseLabels } from "../src/labels";
 
 const AUDIO_TYPES: Readonly<Record<string, string>> = {
@@ -192,6 +195,20 @@ function safePath(dir: string, name: string): string {
   return full;
 }
 
+/**
+ * The folder a read request works in: spike/recordings itself, or the one subfolder named by `?dir=`
+ * (a single [A-Za-z0-9_-] segment, resolved with safePath so it cannot leave the recordings dir).
+ */
+async function readDir(recordingsDir: string, url: URL): Promise<string> {
+  const dir = url.searchParams.get("dir");
+  if (dir === null) return recordingsDir;
+  if (!isValidRecordingsDir(dir)) throw new HttpError(400, "invalid dir");
+  const full = safePath(recordingsDir, dir);
+  const info = await stat(full).catch(() => null);
+  if (!info?.isDirectory()) throw new HttpError(404, "no such folder");
+  return full;
+}
+
 async function exists(path: string): Promise<boolean> {
   try {
     await stat(path);
@@ -227,9 +244,10 @@ async function handle(req: IncomingMessage, res: ServerResponse, recordingsDir: 
   if (rest.length > 0) throw new HttpError(404, "not found");
 
   if (resource === "recordings" && method === "GET") {
-    if (rawName === undefined) return send(res, 200, await listRecordings(recordingsDir));
+    const dir = await readDir(recordingsDir, url);
+    if (rawName === undefined) return send(res, 200, await listRecordings(dir));
     const name = decodeSegment(rawName);
-    const full = safePath(recordingsDir, name);
+    const full = safePath(dir, name);
     if (!isAudioFile(name)) throw new HttpError(400, "not an audio file");
     const info = await stat(full).catch(() => null);
     if (!info?.isFile()) throw new HttpError(404, "no such recording");
@@ -246,7 +264,8 @@ async function handle(req: IncomingMessage, res: ServerResponse, recordingsDir: 
 
   if (resource === "labels" && rawName !== undefined) {
     const base = decodeSegment(rawName);
-    const full = safePath(recordingsDir, `${base}${LABELS_SUFFIX}`);
+    if (method === "POST" && url.searchParams.has("dir")) throw new HttpError(400, "labels can only be written at the top level");
+    const full = safePath(method === "GET" ? await readDir(recordingsDir, url) : recordingsDir, `${base}${LABELS_SUFFIX}`);
     if (method === "GET") {
       const text = await readFile(full, "utf8").catch(() => null);
       if (text === null) throw new HttpError(404, "no labels");

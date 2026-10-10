@@ -10,18 +10,23 @@ async function ensureOk(res: Response): Promise<Response> {
   return res;
 }
 
-export async function listRecordings(): Promise<RecordingInfo[]> {
-  return (await (await ensureOk(await fetch(`${API}/recordings`))).json()) as RecordingInfo[];
+/** `?dir=<subfolder of spike/recordings>` for the read endpoints; "" for the top level. */
+function dirQuery(dir?: string): string {
+  return dir === undefined ? "" : `?dir=${encodeURIComponent(dir)}`;
 }
 
-export async function fetchRecordingFile(name: string): Promise<File> {
-  const res = await ensureOk(await fetch(`${API}/recordings/${encodeURIComponent(name)}`));
+export async function listRecordings(dir?: string): Promise<RecordingInfo[]> {
+  return (await (await ensureOk(await fetch(`${API}/recordings${dirQuery(dir)}`))).json()) as RecordingInfo[];
+}
+
+export async function fetchRecordingFile(name: string, dir?: string): Promise<File> {
+  const res = await ensureOk(await fetch(`${API}/recordings/${encodeURIComponent(name)}${dirQuery(dir)}`));
   return new File([await res.blob()], name, { type: res.headers.get("content-type") ?? "" });
 }
 
 /** The labels file of a recording as a File named `<base>.labels.json`. */
-export async function fetchLabelsFile(base: string): Promise<File> {
-  const res = await ensureOk(await fetch(`${API}/labels/${encodeURIComponent(base)}`));
+export async function fetchLabelsFile(base: string, dir?: string): Promise<File> {
+  const res = await ensureOk(await fetch(`${API}/labels/${encodeURIComponent(base)}${dirQuery(dir)}`));
   return new File([await res.blob()], `${base}.labels.json`, { type: "application/json" });
 }
 
@@ -53,14 +58,18 @@ function pad(n: number): string {
   return String(n).padStart(2, "0");
 }
 
-/** `<YYYYMMDD-HHmmss>_<variant>_<chunk>ms[<suffix>]_<kind>.json` in local time; the suffix names engine overrides (e.g. `_settle12`). */
+/**
+ * `<YYYYMMDD-HHmmss>_<variant>_<chunk>ms[<suffix>][_<dir>]_<kind>.json` in local time; the suffix names engine
+ * overrides (e.g. `_settle12`), `dir` the recordings subfolder the run used.
+ */
 export function resultFileName(
   date: Date,
   variant: string,
   chunkMs: number,
   kind: "results" | "eventlogs",
   suffix = "",
+  dir: string | null = null,
 ): string {
   const stamp = `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
-  return `${stamp}_${variant}_${chunkMs}ms${suffix}_${kind}.json`;
+  return `${stamp}_${variant}_${chunkMs}ms${suffix}${dir === null ? "" : `_${dir}`}_${kind}.json`;
 }
