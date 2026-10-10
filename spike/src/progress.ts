@@ -1,6 +1,10 @@
 // Live-view state: where the cursor is and which words count as matched.
-// A word is matched when it is in the latest word_progress.matched_indices (mapped to the global
-// index) OR in the verdict snapshot `confirmed` (which also covers ayah-final words).
+// A word is matched when it is in a word_progress.matched_indices (mapped to the global index) OR in
+// the verdict snapshot `confirmed` (which also covers ayah-final words). `matched` is cumulative:
+// a word stays matched until the state is reset to INITIAL_PROGRESS (live page Start). The snapshot
+// is not: tilawa returns to search on silence or completion and `verdicts()` is then empty, so the
+// view would drop to the last ayah's words after Stop. The bench already counts words ever
+// confirmed, so live and bench agree.
 import type { WorkerOutbound } from "@tilawa/core";
 import { WORD_COUNT, tryCursorToGlobal, tryToGlobalWordIndex } from "./fatiha";
 
@@ -13,12 +17,6 @@ export interface ProgressState {
 }
 
 export const INITIAL_PROGRESS: ProgressState = { cursor: null, matched: new Set(), eventMatched: [] };
-
-function sameSet(a: ReadonlySet<number>, b: ReadonlySet<number>): boolean {
-  if (a.size !== b.size) return false;
-  for (const value of a) if (!b.has(value)) return false;
-  return true;
-}
 
 export function updateProgress(
   prev: ProgressState,
@@ -41,7 +39,9 @@ export function updateProgress(
     });
   }
 
-  const matched = new Set<number>([...eventMatched, ...confirmed.filter((w) => w >= 0 && w < WORD_COUNT)]);
-  const changed = cursor !== prev.cursor || !sameSet(matched, prev.matched);
+  const matched = new Set<number>(prev.matched);
+  for (const word of eventMatched) matched.add(word);
+  for (const word of confirmed) if (word >= 0 && word < WORD_COUNT) matched.add(word);
+  const changed = cursor !== prev.cursor || matched.size !== prev.matched.size;
   return { state: { cursor, matched, eventMatched }, changed, sawProgress };
 }

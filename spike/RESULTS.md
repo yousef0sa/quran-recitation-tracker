@@ -66,6 +66,7 @@ Variants: A = tilawa default model a0w (T=61, hop 480 ms); B = raw Quran-Lab v3 
 - **Correction issues:** A2 logged 1 (file 2), B2 logged 0 — auto-dismissed by the bench.
 - **p95 is high (~1.4 s in the best case)**, driven mostly by ayah-end words; single outliers reach 5.8 s.
 - B1/B2 loaded and ran without errors (the T=45/hop=32 io override works).
+- **The verdict snapshot is wiped about 3 s after the last word, in every variant.** tilawa returns to search on idle/completed and `verdicts()` is then empty (it is documented as diagnostic only). The live page had shown only the last ayah green after Stop (29 -> 9); fixed by keeping words green until a new Start (2026-10-10). These were not wrong-word verdicts. Risk not yet tested: a pause of about 2-3 s in mid-recitation may trigger the same reset and force a re-lock.
 
 ## Decision criteria
 
@@ -93,5 +94,5 @@ Conditions / follow-ups:
 1. ✅ Define latency in the project documentation as "end of word → word shown as confirmed (green)". Done: PRD success metrics and decision log, `README.md` column definitions (2026-10-10).
 2. Check on a mid-range phone (the success criterion covers laptop **and** phone; this run is a fast desktop — latency is CPU-independent, RTF is not).
 3. Investigate word 17 (1:6, word 1) never confirming (2/5) and the ayah-end p95.
-4. Live-test B2 once to confirm the feel.
+4. Live-test B2 once to confirm the feel. Include a deliberate 4-5 s pause once mid-ayah and once between ayahs.
 5. ✅ Use 80 ms chunks in the live page. Done: the live page defaults to 80 ms and B2, selectable with `?chunk=80|150|300`; the chunk size is defined only in `src/audio.ts` and reaches the worklet via `processorOptions` (2026-10-10).

@@ -165,9 +165,8 @@ describe("live page", () => {
     const recording = labelledRecording();
     test.skip(!hasAssets() || recording === null, "needs assets and a labelled recording in spike/recordings");
     await browser.route("**/__e2e/recording", (route) => route.fulfill({ path: recording as string }));
-    // Pinned to A1 @ 150 ms, the setup this smoke threshold was set on. With the default B2 the highlight
-    // reaches 29/29 during playback but drops to 9 after Stop (see the report); not hidden by loosening this.
-    await openLive(app, browser, { kind: "file", url: "/__e2e/recording" }, "?variant=A1&chunk=150");
+    await openLive(app, browser, { kind: "file", url: "/__e2e/recording" });
+    await expect(browser.locator("#stat-backend")).toHaveText("B2 / 80 ms / WASM single-thread");
     await expect(screen.getByRole("button", START)).toBeEnabled({ timeout: MODEL_READY });
 
     await screen.getByRole("button", START).tap();
@@ -181,8 +180,9 @@ describe("live page", () => {
     await screen.getByRole("button", STOP).tap();
     await expect(screen.getByRole("status")).toHaveText("تم الإيقاف.", { timeout: 15_000 });
 
-    // A1 tracked 95% of words on the maintainer's recordings (RESULTS.md); the weakest file was 25/29.
-    // 24 is a pipeline smoke threshold, not an accuracy measurement (bench.html does that).
+    // Counted after Stop: words stay green until the next Start, even though tilawa's verdict snapshot is
+    // wiped when it returns to search after silence. 24 is a pipeline smoke threshold, not an accuracy
+    // measurement (bench.html does that).
     const count = await matched(browser).count();
     expect(count).toBeGreaterThanOrEqual(24);
     await expect(browser.locator("#stat-lag")).toHaveText(/\d/);
