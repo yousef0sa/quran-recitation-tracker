@@ -6,9 +6,12 @@ export const DEFAULT_THREADS: Threads = 1;
 /** Phones default to 4: single-thread B2 is slower than real time on a mid-range phone (RESULTS.md, follow-up 2). Provisional. */
 export const PHONE_THREADS: Threads = 4;
 
-/** PHONE_THREADS on a phone (by user agent), else DEFAULT_THREADS. */
-export function defaultThreads(userAgent: string): Threads {
-  return /Android|iPhone|iPod|Mobile/i.test(userAgent) ? PHONE_THREADS : DEFAULT_THREADS;
+/**
+ * PHONE_THREADS on a phone (by user agent) on the dev server, else DEFAULT_THREADS.
+ * A production build stays on 1: more than 1 thread hangs at load there (RESULTS.md, follow-up 2).
+ */
+export function defaultThreads(userAgent: string, devServer: boolean): Threads {
+  return devServer && /Android|iPhone|iPod|Mobile/i.test(userAgent) ? PHONE_THREADS : DEFAULT_THREADS;
 }
 
 /** `?threads=1|2|4`; anything else falls back to `fallback` (the device default). */
