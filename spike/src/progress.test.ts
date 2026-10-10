@@ -19,11 +19,40 @@ describe("updateProgress", () => {
     expect([...state.matched]).toEqual([3]);
   });
 
-  it("follows a restart: cursor and matched move back", () => {
+  it("follows a restart: the cursor moves back, matched words stay", () => {
     const a = updateProgress(INITIAL_PROGRESS, [wp(2, 2, 4, [0, 1])], [0, 1, 2, 3]).state;
     const b = updateProgress(a, [wp(1, 1, 4, [0])], [0]).state;
     expect(b.cursor).toBe(1);
-    expect([...b.matched]).toEqual([0]);
+    expect([...b.matched].sort()).toEqual([0, 1, 2, 3, 4, 5]);
+  });
+
+  it("keeps a snapshot-confirmed word after a later empty snapshot", () => {
+    const a = updateProgress(INITIAL_PROGRESS, [wp(1, 2, 4, [0, 1])], [0, 1, 2]).state;
+    const { state, changed } = updateProgress(a, [], []);
+    expect([...state.matched].sort()).toEqual([0, 1, 2]);
+    expect(changed).toBe(false);
+  });
+
+  it("keeps matched_indices words after a word_progress for the next ayah", () => {
+    const a = updateProgress(INITIAL_PROGRESS, [wp(1, 3, 4, [0, 1, 2])]).state;
+    const { state, changed } = updateProgress(a, [wp(2, 1, 4, [0])]);
+    expect([...state.matched].sort()).toEqual([0, 1, 2, 4]);
+    expect(state.cursor).toBe(5);
+    expect(changed).toBe(true);
+  });
+
+  it("is cleared by resetting to INITIAL_PROGRESS", () => {
+    const a = updateProgress(INITIAL_PROGRESS, [wp(1, 2, 4, [0, 1])], [0, 1, 2]).state;
+    expect(a.matched.size).toBe(3);
+    const { state, changed } = updateProgress(INITIAL_PROGRESS, [], []);
+    expect(state.matched.size).toBe(0);
+    expect(state.cursor).toBeNull();
+    expect(changed).toBe(false);
+  });
+
+  it("reports no change when nothing new is added", () => {
+    const a = updateProgress(INITIAL_PROGRESS, [wp(1, 2, 4, [0, 1])], [0, 1]).state;
+    expect(updateProgress(a, [wp(1, 2, 4, [0, 1])], [1]).changed).toBe(false);
   });
 
   it("keeps the last word_progress matched set across chunks without progress", () => {
