@@ -15,6 +15,7 @@ import type { MainToWorker, WorkerToMain } from "./messages";
 import { toGlobalWordIndex } from "./fatiha";
 import type { CompactVerdict } from "./metrics";
 import { CORPUS_PATH, VARIANTS, applyIoOverride, type VariantId } from "./variants";
+import { DEFAULT_THREADS, type Threads } from "./wasm-threads";
 
 const scope = self as unknown as DedicatedWorkerGlobalScope;
 
@@ -79,7 +80,7 @@ async function fetchJson(path: string): Promise<unknown> {
   return JSON.parse(text);
 }
 
-async function initSession(variantId: VariantId, engine: EngineOverride = {}): Promise<void> {
+async function initSession(variantId: VariantId, engine: EngineOverride = {}, threads: Threads = DEFAULT_THREADS): Promise<void> {
   const started = performance.now();
   session = null;
   samplesFed = 0;
@@ -87,7 +88,10 @@ async function initSession(variantId: VariantId, engine: EngineOverride = {}): P
   lastVerdictKey = "";
   const variant = VARIANTS[variantId];
 
-  ort.env.wasm.numThreads = 1;
+  // More than 1 thread needs SharedArrayBuffer (cross-origin isolation); ORT would fall back on its own, we just say so.
+  const isolated = self.crossOriginIsolated === true;
+  if (!isolated && threads > 1) console.warn("[spike] not cross-origin isolated: using 1 thread", { requested: threads });
+  ort.env.wasm.numThreads = isolated ? threads : 1;
   ort.env.wasm.simd = true;
 
   const [model, corpus] = await Promise.all([fetchModel(variant.modelPath), fetchJson(CORPUS_PATH)]);
@@ -108,8 +112,18 @@ async function initSession(variantId: VariantId, engine: EngineOverride = {}): P
     if (variant.expected) created.setExpected(variant.expected);
   }
   session = created;
-  console.info("[spike] model ready", { variant: variantId, engine });
-  post({ type: "ready", loadMs: performance.now() - started, variant: variantId, engine });
+  // Read back after the session exists: what ORT really uses (it resets the value itself when it cannot run threads).
+  const effective = ort.env.wasm.numThreads ?? 1;
+  console.info("[spike] model ready", { variant: variantId, engine, requestedThreads: threads, threads: effective, crossOriginIsolated: isolated });
+  post({
+    type: "ready",
+    loadMs: performance.now() - started,
+    variant: variantId,
+    engine,
+    requestedThreads: threads,
+    threads: effective,
+    crossOriginIsolated: isolated,
+  });
 }
 
 /** The latest correction state in `events` if it leaves an issue open (feed() then returns [] until resolved). */
@@ -214,7 +228,7 @@ async function handleStop(): Promise<void> {
 function handle(message: MainToWorker): Promise<void> {
   switch (message.type) {
     case "init":
-      return initSession(message.variant, message.engine).catch((err: unknown) => {
+      return initSession(message.variant, message.engine, message.threads).catch((err: unknown) => {
         session = null;
         post({ type: "error", stage: "load", message: loadMessage(err) });
       });

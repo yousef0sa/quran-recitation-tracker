@@ -352,7 +352,7 @@ export function devHarness(): Plugin {
       if (!isLoopbackBindHost(host)) {
         throw new Error(
           `dev harness refused: server.host is ${JSON.stringify(host)}. The /__dev endpoints serve your recordings and write files; ` +
-            "never run the dev server with --host or a non-loopback server.host.",
+            "run it on loopback only: never a bare --host, a LAN address or a non-loopback server.host (--host 127.0.0.1 is fine).",
         );
       }
       server.middlewares.use("/__dev", (req, res) => {

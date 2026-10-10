@@ -9,7 +9,6 @@ import {
   splitIntoChunks,
 } from "./audio";
 import {
-  BACKEND_LABEL,
   baseName,
   downloadJson,
   el,
@@ -35,6 +34,7 @@ import {
 } from "./metrics";
 import { TrackerClient } from "./tracker-client";
 import { parseVariantId, type VariantId } from "./variants";
+import { backendLabel, defaultThreads, parseThreads, threadsStatusPart, type Threads } from "./wasm-threads";
 
 /** Seconds of zeros fed as ordinary chunks before stop(), so the last word's confirmation has a precise timestamp. */
 const TAIL_PADDING_SEC = 2.0;
@@ -63,6 +63,10 @@ interface RunResult {
   /** Tilawa engine override applied to the session (from `?settle=`); {} = tilawa defaults. */
   engineConfig: EngineOverride;
   backend: string;
+  /** WASM threads asked for (`?threads=`), what the worker really used (null until `ready`), and whether the page was cross-origin isolated. */
+  requestedThreads: Threads;
+  threads: number | null;
+  crossOriginIsolated: boolean | null;
   userAgent: string;
   hardwareConcurrency: number;
   tailPaddingSec: number;
@@ -102,9 +106,24 @@ const settleIgnoredNote =
     ? `قيمة settle غير صالحة (${settleParam}): استُخدمت قيمة tilawa الافتراضية / invalid settle ignored, tilawa default used`
     : null;
 
+/** `?threads=`: absent or invalid uses the device default (4 on a phone, else 1); invalid is noted in the run. */
+const threadsParam = new URLSearchParams(location.search).get("threads");
+const requestedThreads = parseThreads(threadsParam, defaultThreads(navigator.userAgent));
+const threadsIgnoredNote =
+  threadsParam !== null && String(requestedThreads) !== threadsParam
+    ? `قيمة threads غير صالحة (${threadsParam}): استُخدم العدد الافتراضي ${requestedThreads} / invalid threads ignored, default ${requestedThreads} used`
+    : null;
+
 /** " | settleFrames=12" when an override is set, else "". */
 function engineLabel(engine: EngineOverride): string {
   return engine.settleFrames === undefined ? "" : ` | settleFrames=${engine.settleFrames}`;
+}
+
+/** "" for a plain 1-thread run, else " | threads <requested> -> <effective> | isolated yes/no". */
+function threadsLabel(result: RunResult): string {
+  if (result.requestedThreads === 1 && result.threads === 1) return "";
+  const isolated = result.crossOriginIsolated === null ? "?" : result.crossOriginIsolated ? "yes" : "no";
+  return ` | threads ${result.requestedThreads} -> ${result.threads ?? "?"} | isolated ${isolated}`;
 }
 let tracker: TrackerClient | null = null;
 
@@ -158,7 +177,7 @@ function render(result: RunResult): void {
   output.replaceChildren();
   output.append(
     para(
-      `${result.variant} | chunk ${result.chunkMs} ms${engineLabel(result.engineConfig)} | ${result.backend} | cores ${result.hardwareConcurrency} | load ${formatMs(result.loadMs)} ms`,
+      `${result.variant} | chunk ${result.chunkMs} ms${engineLabel(result.engineConfig)} | ${result.backend}${threadsLabel(result)} | cores ${result.hardwareConcurrency} | load ${formatMs(result.loadMs)} ms`,
       "note ltr",
     ),
   );
@@ -298,7 +317,10 @@ async function run(recordings: File[], labelFiles: File[]): Promise<RunResult | 
     variant: variantId,
     chunkMs,
     engineConfig: engineOverride,
-    backend: BACKEND_LABEL,
+    backend: backendLabel(requestedThreads),
+    requestedThreads,
+    threads: null,
+    crossOriginIsolated: null,
     userAgent: navigator.userAgent,
     hardwareConcurrency: navigator.hardwareConcurrency,
     tailPaddingSec: TAIL_PADDING_SEC,
@@ -313,6 +335,7 @@ async function run(recordings: File[], labelFiles: File[]): Promise<RunResult | 
   const { byRecording, byFileName, problems } = await loadLabelFiles(labelFiles);
   result.skipped.push(...problems);
   if (settleIgnoredNote) result.skipped.push(settleIgnoredNote);
+  if (threadsIgnoredNote) result.skipped.push(threadsIgnoredNote);
 
   let issues: IssueRecord[] = [];
   const client = new TrackerClient((message) => {
@@ -328,10 +351,13 @@ async function run(recordings: File[], labelFiles: File[]): Promise<RunResult | 
     // Fresh worker + init for every run (variant).
     setStatus(`جارٍ تحميل النموذج (${variantId})…`);
     const ready = client.next("ready");
-    client.post({ type: "init", variant: variantId, engine: engineOverride });
+    client.post({ type: "init", variant: variantId, engine: engineOverride, threads: requestedThreads });
     const readyMessage = await ready;
     result.loadMs = readyMessage.loadMs;
     result.engineConfig = readyMessage.engine; // what the worker really applied
+    result.threads = readyMessage.threads;
+    result.crossOriginIsolated = readyMessage.crossOriginIsolated;
+    result.backend = backendLabel(readyMessage.threads);
 
     for (const [index, recording] of recordings.entries()) {
       const found = findLabels(recording, byRecording, byFileName);
@@ -381,7 +407,7 @@ async function run(recordings: File[], labelFiles: File[]): Promise<RunResult | 
     }
     setStatus(
       result.files.length > 0
-        ? `اكتمل: ${result.files.length} ملف (${variantId}، ${chunkMs} ms${result.engineConfig.settleFrames === undefined ? "" : `، settleFrames=${result.engineConfig.settleFrames}`}).`
+        ? `اكتمل: ${result.files.length} ملف (${variantId}، ${chunkMs} ms${result.engineConfig.settleFrames === undefined ? "" : `، settleFrames=${result.engineConfig.settleFrames}`}${threadsStatusPart(result.threads)}).`
         : "لم يُعالَج أي ملف: تأكد من مطابقة أسماء ملفات التعليم.",
       result.files.length === 0,
     );
@@ -418,6 +444,9 @@ function logsJson(result: RunResult): unknown {
     chunkMs: result.chunkMs,
     engineConfig: result.engineConfig,
     backend: result.backend,
+    requestedThreads: result.requestedThreads,
+    threads: result.threads,
+    crossOriginIsolated: result.crossOriginIsolated,
     userAgent: result.userAgent,
     files: result.files.map((f) => ({ recording: f.recording, log: f.log })),
   };
@@ -430,6 +459,9 @@ function summaryJson(result: RunResult) {
     chunkMs: result.chunkMs,
     engineConfig: result.engineConfig,
     backend: result.backend,
+    requestedThreads: result.requestedThreads,
+    threads: result.threads,
+    crossOriginIsolated: result.crossOriginIsolated,
     userAgent: result.userAgent,
     hardwareConcurrency: result.hardwareConcurrency,
     tailPaddingSec: result.tailPaddingSec,

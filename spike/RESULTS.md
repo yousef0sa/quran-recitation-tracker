@@ -12,7 +12,7 @@
 | Browser and version | Chromium 152.0.7977.130 (desktop) |
 | Backend | WASM single-thread (onnxruntime-web 1.24.2, `@tilawa/core` 0.4.0) |
 | `navigator.hardwareConcurrency` | 8 |
-| Recordings | 5 correct readings of Al-Fatiha by the maintainer, no isti'adha, no restarts: `1.aac` 37.7 s, `2.aac` 48.0 s, `3.aac` 39.1 s, `4.aac` 42.4 s (AAC stereo), `5.ogg` 31.0 s (phone voice message, Opus mono, slight clipping) |
+| Recordings | 5 correct readings of Al-Fatiha by the maintainer, no isti'adha; `4.aac` has one deliberate repeat inside ayah 5 (confirmed by the maintainer, 2026-10-10), the others none: `1.aac` 37.7 s, `2.aac` 48.0 s, `3.aac` 39.1 s, `4.aac` 42.4 s (AAC stereo), `5.ogg` 31.0 s (phone voice message, Opus mono, slight clipping) |
 | Labelling | tap labels at 0.5× by the maintainer. Taps land late, so true latency is ~50–125 ms **higher** than measured (same for all variants) |
 | Chunk size(s) | 150 ms (all variants), 80 ms (B1, B2; bench feed only at measurement time; the live page has used 80 ms by default since 2026-10-10) |
 | Asset hashes | `scripts/assets.json` as of 2026-10-08 |
@@ -69,6 +69,36 @@ Variants: A = tilawa default model a0w (T=61, hop 480 ms); B = raw Quran-Lab v3 
 - B1/B2 loaded and ran without errors (the T=45/hop=32 io override works).
 - **The verdict snapshot is wiped about 3 s after the last word, in every variant.** tilawa returns to search on idle/completed and `verdicts()` is then empty (it is documented as diagnostic only). The live page had shown only the last ayah green after Stop (29 -> 9); fixed by keeping words green until a new Start (2026-10-10). These were not wrong-word verdicts. A mid-recitation pause does not trigger it: in the live B2 test (2026-10-10) four pauses of 5–6 s caused no drop and no re-lock, so the end-of-recitation wipe is most likely `completed`, not silence.
 
+## Follow-up 2: phone and WASM threads (2026-10-10)
+
+> المتابعة 2: على جوال متوسط (Redmi Note 8) كان B2 بخيط واحد أبطأ من الوقت الحقيقي (RTF 1.22). بأربعة خيوط صار 0.68: أسرع من الوقت الحقيقي، لكنه لم يبلغ هدف 0.3. لم يتغيّر أي إعداد افتراضي.
+
+Setup: B2 @ 80 ms, the same 5 recordings, `@tilawa/core` 0.4.0, onnxruntime-web 1.24.2. `?threads=1|2|4` (default 1) sets `ort.env.wasm.numThreads`; the dev and preview servers now send COOP/COEP so every page is cross-origin isolated (needed for SharedArrayBuffer). Every run below reports requested = effective threads and `crossOriginIsolated: true`. Phone: Xiaomi Redmi Note 8 (Snapdragon 665, 8 cores, Android 9), Chrome 138.0.7204.179, through `adb reverse` to the loopback dev server. Desktop: headless Chromium 153.0.8010.12, Windows, 8 cores. Model step = chunks where the model ran (compute > 5 ms, ~650 per run; compute p50 is < 1 ms everywhere because most 80 ms chunks only buffer). Raw data: `spike/results/20261010-1[5-8]*` (git-ignored).
+
+Single-thread phone runs before the headers (`20261010-150805_B2_80ms`, `20261010-163757_A2_80ms`): B2 RTF 1.22, load 17.2 s (cold); A2 RTF 0.98, load 8.7 s. Both NO-GO (> 0.8). Per word (cursor / confirm times, verdict states) identical to desktop; only speed differs.
+
+| Device | Threads | Run | RTF | Model step p50 / p95 (ms) | Load (ms) | Battery °C before → after | Tracked | Confirm p50 / p95 (ms) |
+|---|---|---|---|---|---|---|---|---|
+| Phone | 1 | `175959` | 1.21 | 368 / 384 | 10 448 (warm) | 36.0 → 36.0 | 143 / 145 | 379 / 1717 |
+| Phone | 4 | `180617_t4` | **0.68** | 200 / 226 | 12 370 (warm) | 36.0 → 39.3 | 143 / 145 | 387 / 1717 |
+| Phone | 2 | `182310_t2` | 0.85 | 258 / 277 | 11 878 (warm) | 37.3 → 37.3 | 143 / 145 | 387 / 1717 |
+| Phone | 1 | `183117` | 1.21 | 368 / 382 | 12 322 (warm) | 37.3 → 37.3 | 143 / 145 | 379 / 1717 |
+| Desktop | 1 | `174658` | 0.187 | 55 / 71 | 4 301 (cold) | | 143 / 145 | 379 / 1717 |
+| Desktop | 4 | `174735_t4` | 0.145 | 42 / 61 | 3 132 (cold) | | 143 / 145 | 379 / 1717 |
+| Desktop | 2 | `174813_t2` | 0.147 | 43 / 60 | 2 856 (cold) | | 143 / 145 | 379 / 1717 |
+| Desktop | 4 | `174855_t4` | 0.160 | 44 / 76 | 4 472 (cold) | | 143 / 145 | 379 / 1717 |
+
+- **The threads run.** Desktop: `page.workers()` shows 0 / 1 / 3 ORT pthread workers for 1 / 2 / 4 threads (N-1, as expected). Phone, during t4 (`top -H`): four renderer `DedicatedWorker` threads busy at 83-85 % each (the tracker worker + 3 pthreads), 339 % CPU in total. The model step drops with N on both devices.
+- **Phone: 4 threads is the only setting under 0.8**, with 32 % headroom; 2 threads (0.85) is still NO-GO. Neither reaches the 0.3 GO target. The two t1 runs agree (1.2065 vs 1.2074) and match the earlier run (1.2158): no heat drift or browser drift. t4 warmed the battery by 3.3 °C in one ~4 min run.
+- **Desktop: about 20-25 % faster**, and 4 threads is no better than 2 (t4 vs t4 varies by 10 %).
+- **Control:** with the headers, t1 is per-word identical to the run before them, on both devices (desktop: `173449` vs `174658`; phone: `150805` vs `175959`).
+- **Per-word effect.** Threads change float summation order, so the match score `m` moves slightly in about 50 words (desktop ≤ 0.03, phone ≤ 0.15). Desktop t2 and t4: cursor / confirm times and final verdict states identical to t1; t4 vs t4 identical. Phone t2 and t4 (identical to each other): one word differs from t1, 1:4 w3 in `1.aac`, confirmed at 648 instead of 328 ms and ending `unsure` (`d` 0.25) instead of `ok`. Not a false alarm (`unsure` is not shown as one), but a real, device-specific numeric effect.
+- **Production build: threads hang.** Under `vite preview` the pages are isolated, but `index.html?threads=2` never becomes ready within 60 s (no ORT pthread worker starts; 1 thread works). ORT is bundled into the tracker-worker chunk, so its pthread script is that chunk. Not fixed here; Phase 6 needs a fix (e.g. serving ORT's own `.mjs` via `env.wasm.wasmPaths`) plus the same COOP/COEP headers on the host.
+
+**Verdict against the criteria:** phone B2 @ 80 ms with 4 threads is between NO-GO (> 0.8) and GO (≤ 0.3); tracking and confirm latency are unchanged.
+
+**Maintainer's decision (2026-10-10):** tried live on the phone with 4 threads: «يلحق، بسرعة لا بأس بها». 4 threads is the default on phones (by user agent: Android, iPhone, `Mobile`), provisional and to be revisited; desktop stays at 1. `?threads=` still overrides it. Before any hosted build, the production-build hang below must be fixed, or phones would not load. If 0.68 is not enough headroom (UI and mic also need the CPU, and heat builds up), the next levers are: 8 threads, an onnxruntime-web upgrade, A2 with threads (0.98 single-thread), a smaller model.
+
 ## Follow-up 3: verdicts and settleFrames (2026-10-10)
 
 Setup: B2 @ 80 ms, the same 5 recordings, headless Chromium 153.0.8010.12 (Playwright), Windows desktop, 8 cores, WASM single-thread, `@tilawa/core` 0.4.0. The bench now keeps every tilawa verdict (state, distance `d`, heard ratio `h`, margin `m`) in the EventLog, and `?settle=<n>` overrides `settleFrames`. All five recordings are correct readings, so any `wrong` / `skipped` verdict or correction issue below is a false alarm. Positions are `1:<ayah> w<n>`. Raw data: `spike/results/20261010-*` (git-ignored).
@@ -83,7 +113,7 @@ It is heard and judged `wrong`, not skipped and not missing from the list. Both 
 
 ### 1:5 w4 in 4.aac (5838 ms)
 
-Not a settle effect. The word's labelled end is 18.64 s. Like in the other files it had `d` 0.167, `h` 0.833 and was still `pending` at 19.68 s, when the cursor left to 1:6 w1 (+1.04 s, normal). Then the transcript kept growing (1-5 new characters in most steps until 24.8 s) and the alignment moved: at 20.00 s the cursor came back to 1:5 w4 and the distance jumped to 0.688 (`h` 0.667), the word was `wrong` for one step (20.64 s), the cursor went back to 1:5 w2-w3 (20.96-21.60 s) and re-advanced to 1:5 w4 at 22.24 s. It left for 1:6 w2 only at 24.48 s, with the word `unsure` (`d` 0.167, `h` 0.833, `m` 0.883): 24.48 - 18.64 = 5.84 s. The two backward cursor moves of 4.aac are this episode. The labels also put the end of 1:6 w1 at 23.77 s, 5.1 s after 1:5 w4 (about 1.0 s in 1.aac and 3.aac), so there is about 4 s of sound between the two words in this recording: whether the reciter repeated or hesitated there is for the maintainer to check by listening around 19-24 s. With `settle=12` the word is still 5198 ms.
+Not a settle effect. The word's labelled end is 18.64 s. Like in the other files it had `d` 0.167, `h` 0.833 and was still `pending` at 19.68 s, when the cursor left to 1:6 w1 (+1.04 s, normal). Then the transcript kept growing (1-5 new characters in most steps until 24.8 s) and the alignment moved: at 20.00 s the cursor came back to 1:5 w4 and the distance jumped to 0.688 (`h` 0.667), the word was `wrong` for one step (20.64 s), the cursor went back to 1:5 w2-w3 (20.96-21.60 s) and re-advanced to 1:5 w4 at 22.24 s. It left for 1:6 w2 only at 24.48 s, with the word `unsure` (`d` 0.167, `h` 0.833, `m` 0.883): 24.48 - 18.64 = 5.84 s. The two backward cursor moves of 4.aac are this episode. The labels also put the end of 1:6 w1 at 23.77 s, 5.1 s after 1:5 w4 (about 1.0 s in 1.aac and 3.aac), so there is about 4 s of sound between the two words in this recording: the maintainer confirmed a deliberate repeat there (2026-10-10). So the 5838 ms is the repeat, not latency, and the two backward cursor moves are a correctly tracked restart. With `settle=12` the word is still 5198 ms.
 
 ### Ayah-end words in general
 
@@ -108,7 +138,9 @@ The "ever wrong" words are the same three at every value: 1:6 w1 in 3.aac and 4.
 
 1. Keep `settleFrames` at 25 for now. 18 gives little (p95 1717 -> 1574 ms); 12 gives the real gain (ayah-end p95 1878 -> 1215 ms, overall p95 1717 -> 1058 ms) with no new `wrong`, `skipped` or correction issue on these recordings, but it confirms the last word early. Before adopting 12 (or something between), re-run on more recordings (PRD Phase 3), including a reading with a deliberate mistake and a long pause inside an ayah, and decide how the final word is handled.
 2. 1:6 w1 needs a different lever than `settleFrames`: its distance is 0.429 against `unsureDistance` 0.40. Raising that threshold would also make real errors at distance 0.40-0.43 read `unsure`, which matters for Phase 5. Candidates only, not tried: `unsureDistance`, `minMargin`, `commitDwell`, `anchorAyahEnd`.
-3. The 1:5 w4 outlier in 4.aac comes from the cursor moving back and forth while the recording has extra sound; listen to it first.
+3. The 1:5 w4 outlier in 4.aac is a deliberate repeat (confirmed by the maintainer): a correctly tracked restart, not a latency problem.
+
+**Maintainer's decisions (2026-10-10):** `settleFrames` stays 25 until the tracker can tell a held long vowel (madd) from silence, so ayah ends can be confirmed early without the last word turning green while it is still being held. 1:6 w1 on files 3 and 4 is kept as a "may be wrong" case for now, until this is settled.
 
 ## Trust set: false alarms on correct readings (2026-10-10)
 
@@ -151,7 +183,7 @@ Reason: the cursor was chosen as the metric only because research expected it to
 
 Conditions / follow-ups:
 1. ✅ Define latency in the project documentation as "end of word → word shown as confirmed (green)". Done: PRD success metrics and decision log, `README.md` column definitions (2026-10-10).
-2. Check on a mid-range phone (the success criterion covers laptop **and** phone; this run is a fast desktop — latency is CPU-independent, RTF is not).
+2. ✅ Check on a mid-range phone (the success criterion covers laptop **and** phone; this run is a fast desktop — latency is CPU-independent, RTF is not). Done: see "Follow-up 2" (2026-10-10). Redmi Note 8: B2 RTF 1.21 single-thread (NO-GO), 0.85 with 2 WASM threads, 0.68 with 4; tracking and latency unchanged. Threads hang in the production build (Phase 6). Maintainer's decision: 4 threads by default on phones, provisional; desktop 1.
 3. ✅ (diagnosed, not fixed) Investigate word 17 (1:6, word 1) never confirming (2/5) and the ayah-end p95. Done: see "Follow-up 3" (2026-10-10). 1:6 w1 is judged `wrong` at distance 0.429 against a 0.40 limit; the ayah-end delay is the `pending` wait, and `settleFrames` 12 cuts ayah-end p95 from 1878 to 1215 ms but confirms the last word early. Defaults unchanged; the choice is the maintainer's.
 4. ✅ Live-test B2 once to confirm the feel. Include a deliberate 4-5 s pause once mid-ayah and once between ayahs. Done: see Live feel (2026-10-10).
 5. ✅ Use 80 ms chunks in the live page. Done: the live page defaults to 80 ms and B2, selectable with `?chunk=80|150|300`; the chunk size is defined only in `src/audio.ts` and reaches the worklet via `processorOptions` (2026-10-10).

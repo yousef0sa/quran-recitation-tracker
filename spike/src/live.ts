@@ -1,8 +1,8 @@
 // Live mic page: words highlight as you recite; stats on screen; EventLog downloadable.
-// `?variant=` picks the variant (default B2) and `?chunk=` the audio chunk size (default 80 ms; see src/audio.ts).
+// `?variant=` picks the variant (default B2) and `?chunk=` the audio chunk size (default 80 ms; see src/audio.ts),
+// `?threads=` the WASM thread count (default 4 on a phone, else 1; see src/wasm-threads.ts).
 import { startMic, parseChunkMs, MicError, TARGET_RATE, type MicHandle } from "./audio";
 import {
-  BACKEND_LABEL,
   downloadJson,
   el,
   errorMessage,
@@ -16,8 +16,11 @@ import type { WorkerToMain } from "./messages";
 import { entryFromEvents, flushEntryFromStopped, summarize, type EventLog } from "./metrics";
 import { INITIAL_PROGRESS, updateProgress, type ProgressState } from "./progress";
 import { TrackerClient } from "./tracker-client";
+import { backendLabel, defaultThreads, parseThreads } from "./wasm-threads";
 
-const chunkMs = parseChunkMs(new URLSearchParams(location.search).get("chunk"));
+const query = new URLSearchParams(location.search);
+const chunkMs = parseChunkMs(query.get("chunk"));
+const requestedThreads = parseThreads(query.get("threads"), defaultThreads(navigator.userAgent));
 
 const variantSelect = el<HTMLSelectElement>("variant");
 const variantId = initVariantSelect(variantSelect);
@@ -38,6 +41,9 @@ let epoch = 0;
 /** True between the Stop click and the worker's "stopped" (or an error): Start, the variant select and Download stay disabled. */
 let stopping = false;
 let loadMs: number | null = null;
+/** Effective WASM threads and isolation, known after `ready`; the label shows the requested count until then. */
+let threads: number | null = null;
+let isolated: boolean | null = null;
 let log: EventLog = { variant: variantId, chunkMs, entries: [] };
 const arrival = new Map<number, number>();
 const computeValues: number[] = [];
@@ -61,7 +67,7 @@ function renderStats(): void {
   el("stat-compute").textContent = compute ? `${formatMs(compute.p50, 1)} / ${formatMs(compute.p95, 1)}` : "-";
   el("stat-rtf").textContent = audioSec > 0 ? (computeSum / (audioSec * 1000)).toFixed(3) : "-";
   el("stat-lag").textContent = lag ? `${formatMs(lag.p50)} / ${formatMs(lag.p95)}` : "-";
-  el("stat-backend").textContent = `${variantId} / ${chunkMs} ms / ${BACKEND_LABEL}`;
+  el("stat-backend").textContent = `${variantId} / ${chunkMs} ms / ${backendLabel(threads ?? requestedThreads)}`;
 }
 
 function onEvents(message: Extract<WorkerToMain, { type: "events" }>): void {
@@ -104,6 +110,8 @@ const tracker = new TrackerClient((message) => {
     case "ready":
       ready = true;
       loadMs = message.loadMs;
+      threads = message.threads;
+      isolated = message.crossOriginIsolated;
       setStatus(`النموذج جاهز (${message.loadMs.toFixed(0)} ms). اضغط «ابدأ» وابدأ التلاوة.`);
       startButton.disabled = false;
       renderStats();
@@ -193,12 +201,20 @@ stopButton.addEventListener("click", () => {
 downloadButton.addEventListener("click", () => {
   downloadJson(`eventlog-${variantId}-${Date.now()}.json`, {
     ...log,
-    meta: { userAgent: navigator.userAgent, backend: BACKEND_LABEL, loadMs, source: "live-mic" },
+    meta: {
+      userAgent: navigator.userAgent,
+      backend: backendLabel(threads ?? requestedThreads),
+      requestedThreads,
+      threads,
+      crossOriginIsolated: isolated,
+      loadMs,
+      source: "live-mic",
+    },
   });
 });
 
 variantSelect.addEventListener("change", () => {
-  // Keep the other query params (e.g. ?chunk=); only the variant changes.
+  // Keep the other query params (e.g. ?chunk=, ?threads=); only the variant changes.
   const params = new URLSearchParams(location.search);
   params.set("variant", variantSelect.value);
   location.search = `?${params}`;
@@ -209,7 +225,7 @@ fetchDisplayWords()
   .then((words) => {
     wordNodes = renderWords(wordsBox, words);
     setStatus("جارٍ تحميل النموذج…");
-    tracker.post({ type: "init", variant: variantId });
+    tracker.post({ type: "init", variant: variantId, threads: requestedThreads });
   })
   .catch((err: unknown) => {
     const text = errorMessage(err);

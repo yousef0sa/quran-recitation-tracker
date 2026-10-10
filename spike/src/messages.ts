@@ -3,17 +3,29 @@ import type { WorkerOutbound } from "@tilawa/core";
 import type { EngineOverride } from "./engine-config";
 import type { CompactVerdict } from "./metrics";
 import type { VariantId } from "./variants";
+import type { Threads } from "./wasm-threads";
 
 export type MainToWorker =
-  /** `engine` is the bench's optional tilawa override; absent or empty means tilawa's defaults. */
-  | { type: "init"; variant: VariantId; engine?: EngineOverride }
+  /** `engine` is the bench's optional tilawa override; absent or empty means tilawa's defaults. `threads` is the requested WASM thread count (default 1). */
+  | { type: "init"; variant: VariantId; engine?: EngineOverride; threads?: Threads }
   | { type: "audio"; chunkId: number; samples: Float32Array }
   | { type: "stop" }
   | { type: "reset" };
 
 export type WorkerToMain =
-  /** `engine` is the override actually applied to the session ({} = tilawa defaults). */
-  | { type: "ready"; loadMs: number; variant: VariantId; engine: EngineOverride }
+  /**
+   * `engine` is the override actually applied to the session ({} = tilawa defaults). `threads` is the effective
+   * WASM thread count (1 when the page is not cross-origin isolated), `requestedThreads` what init asked for.
+   */
+  | {
+      type: "ready";
+      loadMs: number;
+      variant: VariantId;
+      engine: EngineOverride;
+      requestedThreads: Threads;
+      threads: number;
+      crossOriginIsolated: boolean;
+    }
   /** Acknowledges {type:"reset"}; a failed reset posts an error instead. */
   | { type: "resetDone" }
   | {

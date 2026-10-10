@@ -1,5 +1,6 @@
 // Dev-only bench additions: use spike/recordings without file pickers, and URL autorun
-// (bench.html?autorun=1&variant=A1&chunk=150, plus &settle=12 to override tilawa's settleFrames).
+// (bench.html?autorun=1&variant=A1&chunk=150, plus &settle=12 to override tilawa's settleFrames and
+// &threads=2|4 for WASM threads; a run that did not get the threads it asked for is saved with `_req<N>` and ends as error).
 // `&dir=trust` (also for the button) uses the recordings in spike/recordings/trust/ instead of the top level;
 // the name rule is RECORDINGS_DIR_PATTERN, the same one the dev server enforces. Result files then get a
 // `_<dir>` part and the results/summary JSON a `recordingsDir` field (null for the top level).
@@ -10,6 +11,7 @@ import { SETTLE_FRAMES_MAX, SETTLE_FRAMES_MIN, engineConfigSuffix, parseSettleFr
 import { isValidRecordingsDir, RECORDINGS_DIR_PATTERN } from "./recordings-dir";
 import { fetchLabelsFile, fetchRecordingFile, listRecordings, postResult, resultFileName } from "./dev-api";
 import { isVariantId } from "../variants";
+import { THREAD_OPTIONS, parseThreads, threadsFileSuffix, type Threads } from "../wasm-threads";
 
 export interface BenchDevHost<R> {
   controls: HTMLElement;
@@ -19,7 +21,14 @@ export interface BenchDevHost<R> {
   select(recordings: File[], labels: File[]): void;
   /** Null when nothing was selected to run. */
   run(): Promise<R | null>;
-  toResultsJson(result: R): { variant: string; chunkMs: number; engineConfig: EngineOverride };
+  toResultsJson(result: R): {
+    variant: string;
+    chunkMs: number;
+    engineConfig: EngineOverride;
+    requestedThreads: Threads;
+    /** Effective count; null when the model never loaded. */
+    threads: number | null;
+  };
   toLogsJson(result: R): unknown;
   toSummaryJson(result: R): Record<string, unknown>;
   didFail(result: R): boolean;
@@ -106,6 +115,11 @@ export function initBenchDev<R>(host: BenchDevHost<R>): void {
       if (settle !== null && parseSettleFrames(settle) === null) {
         throw new Error(`unsupported settle "${settle}" (integer ${SETTLE_FRAMES_MIN}-${SETTLE_FRAMES_MAX})`);
       }
+      // Same for threads: bench.ts falls back to the device default, an autorun refuses.
+      const threads = params.get("threads");
+      if (threads !== null && String(parseThreads(threads)) !== threads) {
+        throw new Error(`unsupported threads "${threads}" (use ${THREAD_OPTIONS.join(", ")})`);
+      }
       const dir = recordingsDirParam();
 
       const count = await useDevRecordings();
@@ -121,13 +135,18 @@ export function initBenchDev<R>(host: BenchDevHost<R>): void {
         finish("error", { error: "nothing to run (no recordings selected)" });
         return;
       }
-      const failed = host.didFail(result);
       const results = { ...host.toResultsJson(result), recordingsDir: dir };
+      // Effective count known and different from the request: the file name says so and the run counts as an error.
+      const threadsMismatch =
+        results.threads !== null && results.threads !== results.requestedThreads
+          ? `requested ${results.requestedThreads} threads, ran with ${results.threads}`
+          : null;
+      const failed = host.didFail(result) || threadsMismatch !== null;
       const now = new Date();
       const saved: string[] = [];
       let saveError: string | null = null;
       try {
-        const suffix = engineConfigSuffix(results.engineConfig);
+        const suffix = engineConfigSuffix(results.engineConfig) + threadsFileSuffix(results.requestedThreads, results.threads);
         saved.push(await postResult(resultFileName(now, results.variant, results.chunkMs, "results", suffix, dir), results));
         saved.push(
           await postResult(
@@ -140,7 +159,13 @@ export function initBenchDev<R>(host: BenchDevHost<R>): void {
         console.error("[spike] could not save results", saveError);
       }
       const payload = host.toSummaryJson(result);
-      finish(failed || saveError !== null ? "error" : "1", { ...payload, recordingsDir: dir, savedTo: saved, saveError });
+      finish(failed || saveError !== null ? "error" : "1", {
+        ...payload,
+        ...(threadsMismatch !== null && !payload.error ? { error: threadsMismatch } : {}),
+        recordingsDir: dir,
+        savedTo: saved,
+        saveError,
+      });
     } catch (err) {
       const message = errorMessage(err);
       console.error("[spike] autorun failed", message);

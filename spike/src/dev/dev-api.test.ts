@@ -14,6 +14,12 @@ describe("resultFileName", () => {
     expect(resultFileName(date, "B2", 80, "results", "")).toBe("20261008-070509_B2_80ms_results.json");
   });
 
+  it("puts the thread suffix after the engine suffix", () => {
+    const date = new Date(2026, 9, 8, 7, 5, 9);
+    expect(resultFileName(date, "B2", 80, "results", "_settle12_t4")).toBe("20261008-070509_B2_80ms_settle12_t4_results.json");
+    expect(resultFileName(date, "B2", 80, "eventlogs", "_t2_req4")).toBe("20261008-070509_B2_80ms_t2_req4_eventlogs.json");
+  });
+
   it("adds the recordings folder after the engine suffix, and keeps the old names without one", () => {
     const date = new Date(2026, 9, 8, 7, 5, 9);
     expect(resultFileName(date, "B2", 80, "results", "", "trust")).toBe("20261008-070509_B2_80ms_trust_results.json");
