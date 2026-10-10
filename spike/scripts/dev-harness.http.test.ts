@@ -143,6 +143,73 @@ describe("dev harness over http", () => {
   });
 });
 
+describe("recordings subfolder (?dir=)", () => {
+  const fileName = "rec é 1.wav"; // synthetic: spaces and a non-ASCII letter, like the real file names
+  const base = "rec é 1";
+  const content = "placeholder bytes, not audio";
+  const enc = encodeURIComponent;
+
+  beforeAll(() => {
+    mkdirSync(join(root, "recordings", "sub"));
+    writeFileSync(join(root, "recordings", "sub", fileName), content);
+    writeFileSync(join(root, "recordings", "sub", `${base}.labels.json`), JSON.stringify(labels("sub")));
+    writeFileSync(join(root, "recordings", "sub", "nolabels.wav"), content);
+  });
+
+  it("lists a subfolder with hasLabels, and the top level does not include its files", async () => {
+    const sub = JSON.parse((await call("GET", "/recordings?dir=sub")).body) as { name: string; base: string; hasLabels: boolean }[];
+    expect(sub.map((r) => [r.name, r.hasLabels])).toEqual([
+      ["nolabels.wav", false],
+      [fileName, true],
+    ]);
+    expect(sub.find((r) => r.name === fileName)?.base).toBe(base);
+    const top = JSON.parse((await call("GET", "/recordings")).body) as { name: string }[];
+    expect(top.map((r) => r.name)).not.toContain(fileName);
+    expect(top.map((r) => r.name)).not.toContain("nolabels.wav");
+    expect(top.map((r) => r.name)).not.toContain("sub");
+  });
+
+  it("serves a recording and its labels from the subfolder, names with spaces and non-ASCII letters", async () => {
+    const file = await call("GET", `/recordings/${enc(fileName)}?dir=sub`);
+    expect(file.status).toBe(200);
+    expect(file.headers["content-type"]).toBe("audio/wav");
+    expect(file.body).toBe(content);
+    const lab = await call("GET", `/labels/${enc(base)}?dir=sub`);
+    expect(lab.status).toBe(200);
+    expect(JSON.parse(lab.body).notes).toBe("sub");
+    // without dir the same names are not found at the top level
+    expect((await call("GET", `/recordings/${enc(fileName)}`)).status).toBe(404);
+    expect((await call("GET", `/labels/${enc(base)}`)).status).toBe(404);
+  });
+
+  it("rejects anything but one plain folder name with 400, on all three read endpoints", async () => {
+    // Query values as sent on the wire: "%2e%2e" is the percent-encoded "..", "a%5Cb" is "a\b".
+    const bad = ["..", "a%2Fb", "a%5Cb", "%2e%2e", "C%3A%5CWindows", "%2Fetc", "", "a".repeat(65), ".", "su%20b", "sub%2F", "%C3%A9"];
+    for (const q of bad) {
+      for (const path of [`/recordings?dir=${q}`, `/recordings/${enc(fileName)}?dir=${q}`, `/labels/${enc(base)}?dir=${q}`]) {
+        expect((await call("GET", path)).status, path).toBe(400);
+      }
+    }
+    expect((await call("GET", "/recordings?dir=a/b")).status).toBe(400); // raw slash in the query
+    expect((await call("GET", `/recordings?dir=${"a".repeat(64)}`)).status).toBe(404); // longest allowed name, just absent
+  });
+
+  it("404 for a missing folder, or a name that is a file", async () => {
+    expect((await call("GET", "/recordings?dir=nope")).status).toBe(404);
+    expect((await call("GET", `/recordings/${enc(fileName)}?dir=nope`)).status).toBe(404);
+    expect((await call("GET", "/labels/take?dir=nope")).status).toBe(404);
+    writeFileSync(join(root, "recordings", "plainfile"), "x");
+    expect((await call("GET", "/recordings?dir=plainfile")).status).toBe(404);
+  });
+
+  it("the labeler stays top-level only: POST with dir is refused and writes nothing", async () => {
+    const r = await call("POST", "/labels/zzz?dir=sub", { body: JSON.stringify(labels("x")) });
+    expect(r.status).toBe(400);
+    expect(existsSync(join(root, "recordings", "sub", "zzz.labels.json"))).toBe(false);
+    expect(existsSync(join(root, "recordings", "zzz.labels.json"))).toBe(false);
+  });
+});
+
 describe("startup assertion", () => {
   it("refuses to start when server.host would expose the harness", () => {
     for (const host of [true, "0.0.0.0", "192.168.0.10"]) {

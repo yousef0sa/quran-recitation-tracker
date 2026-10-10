@@ -1,9 +1,13 @@
 // Dev-only bench additions: use spike/recordings without file pickers, and URL autorun
 // (bench.html?autorun=1&variant=A1&chunk=150, plus &settle=12 to override tilawa's settleFrames).
+// `&dir=trust` (also for the button) uses the recordings in spike/recordings/trust/ instead of the top level;
+// the name rule is RECORDINGS_DIR_PATTERN, the same one the dev server enforces. Result files then get a
+// `_<dir>` part and the results/summary JSON a `recordingsDir` field (null for the top level).
 // Loaded via a dynamic import behind `import.meta.env.DEV` in bench.ts.
 import { CHUNK_MS_OPTIONS } from "../audio";
 import { errorMessage } from "../common";
 import { SETTLE_FRAMES_MAX, SETTLE_FRAMES_MIN, engineConfigSuffix, parseSettleFrames, type EngineOverride } from "../engine-config";
+import { isValidRecordingsDir, RECORDINGS_DIR_PATTERN } from "./recordings-dir";
 import { fetchLabelsFile, fetchRecordingFile, listRecordings, postResult, resultFileName } from "./dev-api";
 import { isVariantId } from "../variants";
 
@@ -22,6 +26,17 @@ export interface BenchDevHost<R> {
 }
 
 export function initBenchDev<R>(host: BenchDevHost<R>): void {
+  const params = new URLSearchParams(location.search);
+
+  /** The page's `?dir=` (null = top level). Throws on a name the dev server would refuse. */
+  function recordingsDirParam(): string | null {
+    const dir = params.get("dir");
+    if (dir !== null && !isValidRecordingsDir(dir)) {
+      throw new Error(`unsupported dir "${dir}" (one folder name matching ${RECORDINGS_DIR_PATTERN})`);
+    }
+    return dir;
+  }
+
   const useButton = document.createElement("button");
   useButton.id = "dev-use-recordings";
   useButton.textContent = "استخدم spike/recordings";
@@ -35,16 +50,18 @@ export function initBenchDev<R>(host: BenchDevHost<R>): void {
 
   /** Loads every recording that has labels. Returns how many were selected. */
   async function useDevRecordings(): Promise<number> {
-    const all = await listRecordings();
+    const dir = recordingsDirParam() ?? undefined;
+    const where = dir === undefined ? "spike/recordings" : `spike/recordings/${dir}`;
+    const all = await listRecordings(dir);
     const labelled = all.filter((r) => r.hasLabels);
-    const recordings = await Promise.all(labelled.map((r) => fetchRecordingFile(r.name)));
-    const labels = await Promise.all(labelled.map((r) => fetchLabelsFile(r.base)));
+    const recordings = await Promise.all(labelled.map((r) => fetchRecordingFile(r.name, dir)));
+    const labels = await Promise.all(labelled.map((r) => fetchLabelsFile(r.base, dir)));
     host.select(recordings, labels);
     const skipped = all.length - labelled.length;
     host.setStatus(
       labelled.length > 0
-        ? `تم اختيار ${labelled.length} تسجيل له تعليم من spike/recordings${skipped > 0 ? ` (تم تجاهل ${skipped} بلا تعليم)` : ""}.`
-        : "لا توجد تسجيلات لها تعليم في spike/recordings.",
+        ? `تم اختيار ${labelled.length} تسجيل له تعليم من ${where}${skipped > 0 ? ` (تم تجاهل ${skipped} بلا تعليم)` : ""}.`
+        : `لا توجد تسجيلات لها تعليم في ${where}.`,
       labelled.length === 0,
     );
     return labelled.length;
@@ -68,7 +85,6 @@ export function initBenchDev<R>(host: BenchDevHost<R>): void {
     document.body.dataset.benchDone = state;
   }
 
-  const params = new URLSearchParams(location.search);
   if (params.get("autorun") !== "1") return;
 
   void (async () => {
@@ -90,10 +106,13 @@ export function initBenchDev<R>(host: BenchDevHost<R>): void {
       if (settle !== null && parseSettleFrames(settle) === null) {
         throw new Error(`unsupported settle "${settle}" (integer ${SETTLE_FRAMES_MIN}-${SETTLE_FRAMES_MAX})`);
       }
+      const dir = recordingsDirParam();
 
       const count = await useDevRecordings();
       if (count === 0) {
-        finish("error", { error: "no labelled recordings in spike/recordings (a recording needs <base>.labels.json)" });
+        finish("error", {
+          error: `no labelled recordings in spike/recordings${dir === null ? "" : `/${dir}`} (a recording needs <base>.labels.json)`,
+        });
         return;
       }
 
@@ -103,16 +122,16 @@ export function initBenchDev<R>(host: BenchDevHost<R>): void {
         return;
       }
       const failed = host.didFail(result);
-      const results = host.toResultsJson(result);
+      const results = { ...host.toResultsJson(result), recordingsDir: dir };
       const now = new Date();
       const saved: string[] = [];
       let saveError: string | null = null;
       try {
         const suffix = engineConfigSuffix(results.engineConfig);
-        saved.push(await postResult(resultFileName(now, results.variant, results.chunkMs, "results", suffix), results));
+        saved.push(await postResult(resultFileName(now, results.variant, results.chunkMs, "results", suffix, dir), results));
         saved.push(
           await postResult(
-            resultFileName(now, results.variant, results.chunkMs, "eventlogs", suffix),
+            resultFileName(now, results.variant, results.chunkMs, "eventlogs", suffix, dir),
             host.toLogsJson(result),
           ),
         );
@@ -121,7 +140,7 @@ export function initBenchDev<R>(host: BenchDevHost<R>): void {
         console.error("[spike] could not save results", saveError);
       }
       const payload = host.toSummaryJson(result);
-      finish(failed || saveError !== null ? "error" : "1", { ...payload, savedTo: saved, saveError });
+      finish(failed || saveError !== null ? "error" : "1", { ...payload, recordingsDir: dir, savedTo: saved, saveError });
     } catch (err) {
       const message = errorMessage(err);
       console.error("[spike] autorun failed", message);

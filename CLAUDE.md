@@ -12,7 +12,7 @@ Free, open-source Quran recitation tracker that runs fully in the browser, on th
 - Audio and user data never leave the device: no servers, accounts, analytics, or network calls with user data. Never run `npx e2e feedback` or anything else that sends data out.
 - Run the dev server on loopback only (no bare `--host`, no LAN address): its dev-only `/__dev/` endpoints serve personal recordings and write files.
 - Never commit audio, models, the corpus, `spike/recordings/` or `spike/results/` (privacy, and the NPL-1.2 licence: `spike/NOTICE.md`).
-- The only test set is the owner's own recordings in `spike/recordings/`.
+- Two test sets, reported separately: the owner's own recordings in `spike/recordings/` (all latency and accuracy numbers), and the trust set in `spike/recordings/trust/` (known reciters, only to count false alarms on correct readings).
 
 ## Commands (run in `spike/`)
 

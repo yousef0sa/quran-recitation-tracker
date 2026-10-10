@@ -66,6 +66,8 @@ Tap reaction adds roughly 100-250 ms of bias. Label at 0.5x to keep it small; th
 
 Results are deterministic: the same file, variant and chunk size give identical latency numbers (compute times vary run to run).
 
+Dev bench folder: `bench.html?autorun=1&variant=B2&chunk=80&dir=trust` (and the "use spike/recordings" button) read the labelled recordings in `spike/recordings/trust/` instead of the top level. `dir` is one folder name (`[A-Za-z0-9_-]`, up to 64 characters; the dev server answers 400 otherwise, 404 for a missing folder). Result files get a `_<dir>` part (`<time>_B2_80ms_trust_results.json`) and the results JSON a `recordingsDir` field (`null` at the top level). The labeler still writes only at the top level.
+
 Engine override and verdict log:
 
 - `bench.html?settle=<1..200>` overrides tilawa's `settleFrames` (default 25 frames = 1 s at 25 Hz; the engine decodes 8 frames per 320 ms step, so it acts in whole steps). It is read from the URL only (no control on the page, not on the live page); an invalid value falls back to the default and is noted in the run, and the dev autorun (`?autorun=1&variant=B2&chunk=80&settle=12`) rejects it with an error. The value actually applied is recorded as `engineConfig` in the results and EventLog JSON (`{}` = defaults) and shown in the page header; dev autorun result files get a `_settle<n>` part (`<time>_B2_80ms_settle12_results.json`).

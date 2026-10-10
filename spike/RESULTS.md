@@ -110,6 +110,23 @@ The "ever wrong" words are the same three at every value: 1:6 w1 in 3.aac and 4.
 2. 1:6 w1 needs a different lever than `settleFrames`: its distance is 0.429 against `unsureDistance` 0.40. Raising that threshold would also make real errors at distance 0.40-0.43 read `unsure`, which matters for Phase 5. Candidates only, not tried: `unsureDistance`, `minMargin`, `commitDwell`, `anchorAyahEnd`.
 3. The 1:5 w4 outlier in 4.aac comes from the cursor moving back and forth while the recording has extra sound; listen to it first.
 
+## Trust set: false alarms on correct readings (2026-10-10)
+
+> مجموعة الثقة: ثمانية تسجيلات منشورة للفاتحة بأصوات قرّاء معروفين، تُستخدم فقط لعدّ التنبيهات الكاذبة على قراءة صحيحة. أرقامها لا تُدمج مع تسجيلات صاحب المشروع.
+
+Setup: B2 @ 80 ms, headless Chromium 153.0.8010.12, WASM single-thread, `@tilawa/core` 0.4.0. 8 studio recordings (mp3) in `spike/recordings/trust/` (git-ignored, third-party audio, never committed), by Saad Al-Ghamdi, Ali Al-Hudhaifi, Ammar Luay Al-Mulla Ali, Fares Abbad, Maher Al-Muaiqly, Mohamed Siddiq Al-Minshawi (murattal), Mishary Rashid Alafasy and Yasser Al-Dosari. Labelled by the maintainer. Each recording is a correct reading, so any `wrong` / `skipped` verdict or correction issue counts as a false alarm. Raw data: `spike/results/trust-20261010T083518_*` (default) and `trust-20261010T083629_*` (`settle=12`).
+
+| settleFrames | Tracked | Words ever `wrong` | Words ever `skipped` | Correction issues | False adv. | Restarts | Interior confirm p50 / p95 (n = 176) | Overall p50 / p95 (n = 232) | First lock |
+|---|---|---|---|---|---|---|---|---|---|
+| 25 (default) | **232 / 232 (100 %)** | **0** | **0** | **0** | 0 | 0 | 335 / 1064 | 295 / 1473 | 1.44-2.08 s |
+| 12 | 232 / 232 (100 %) | 0 | 0 | 0 | 0 | 0 | 335 / 1064 | 262 / 1097 | same |
+
+- **No false alarm** in 8 readings by 8 reciters at either setting.
+- **1:6 w1 is confirmed in all 8** (199-649 ms). The `wrong` verdict on the maintainer's files 3 and 4 is therefore not a model blind spot for this word: the model hears those two readings about one phoneme away from the expected form. In the app this is the case to show as "may be wrong", never as a ruling.
+- `unsure` (not shown as an alarm) in the final verdict list: 1:1 w4 for 4 reciters (`d` 0.2, likely the pausal form at the ayah end), and 1:2 w1 and 1:3 w1 for one reciter. Everything else ends `ok`.
+- **Ayah-end latency is not reported for this set**: many ayah-end words are confirmed before their labelled end (down to -2.2 s), so the ayah-end labels here sit after the long vowel or the breath. The interior numbers match the maintainer's set (335 / 1064 vs 375 / 1035 ms).
+- Limits: clean studio audio by professional reciters is easier than a phone mic in a room. This set shows that correct readings are not flagged; it says nothing about catching real mistakes.
+
 ## Decision criteria
 
 As planned before the run. Latency was later redefined as confirm latency (see the decision below).

@@ -13,4 +13,11 @@ describe("resultFileName", () => {
     expect(resultFileName(date, "B2", 80, "results", "_settle12")).toBe("20261008-070509_B2_80ms_settle12_results.json");
     expect(resultFileName(date, "B2", 80, "results", "")).toBe("20261008-070509_B2_80ms_results.json");
   });
+
+  it("adds the recordings folder after the engine suffix, and keeps the old names without one", () => {
+    const date = new Date(2026, 9, 8, 7, 5, 9);
+    expect(resultFileName(date, "B2", 80, "results", "", "trust")).toBe("20261008-070509_B2_80ms_trust_results.json");
+    expect(resultFileName(date, "B2", 80, "eventlogs", "_settle12", "trust")).toBe("20261008-070509_B2_80ms_settle12_trust_eventlogs.json");
+    expect(resultFileName(date, "B2", 80, "results", "", null)).toBe("20261008-070509_B2_80ms_results.json");
+  });
 });
