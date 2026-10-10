@@ -7,4 +7,10 @@ describe("resultFileName", () => {
     expect(resultFileName(date, "A1", 150, "results")).toBe("20261008-070509_A1_150ms_results.json");
     expect(resultFileName(date, "B1", 80, "eventlogs")).toBe("20261008-070509_B1_80ms_eventlogs.json");
   });
+
+  it("puts an optional engine suffix after the chunk size", () => {
+    const date = new Date(2026, 9, 8, 7, 5, 9);
+    expect(resultFileName(date, "B2", 80, "results", "_settle12")).toBe("20261008-070509_B2_80ms_settle12_results.json");
+    expect(resultFileName(date, "B2", 80, "results", "")).toBe("20261008-070509_B2_80ms_results.json");
+  });
 });

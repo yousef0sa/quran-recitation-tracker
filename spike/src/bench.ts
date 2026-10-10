@@ -19,6 +19,7 @@ import {
   initVariantSelect,
   makeStatus,
 } from "./common";
+import { engineOverrideFrom, parseSettleFrames, type EngineOverride } from "./engine-config";
 import { WORD_COUNT } from "./fatiha";
 import { parseLabels, type Labels } from "./labels";
 import {
@@ -59,6 +60,8 @@ interface RunResult {
   generatedAt: string;
   variant: VariantId;
   chunkMs: number;
+  /** Tilawa engine override applied to the session (from `?settle=`); {} = tilawa defaults. */
+  engineConfig: EngineOverride;
   backend: string;
   userAgent: string;
   hardwareConcurrency: number;
@@ -90,6 +93,19 @@ let displayWords: string[] | null = null;
 /** Files chosen through the dev-only "spike/recordings" button; replaces the file inputs while set. */
 let injected: { recordings: File[]; labels: File[] } | null = null;
 let lastResult: RunResult | null = null;
+
+/** `?settle=<n>` (bench only, no UI control): a bad value falls back to tilawa's default and is noted in the run. */
+const settleParam = new URLSearchParams(location.search).get("settle");
+const engineOverride = engineOverrideFrom(parseSettleFrames(settleParam));
+const settleIgnoredNote =
+  settleParam !== null && engineOverride.settleFrames === undefined
+    ? `قيمة settle غير صالحة (${settleParam}): استُخدمت قيمة tilawa الافتراضية / invalid settle ignored, tilawa default used`
+    : null;
+
+/** " | settleFrames=12" when an override is set, else "". */
+function engineLabel(engine: EngineOverride): string {
+  return engine.settleFrames === undefined ? "" : ` | settleFrames=${engine.settleFrames}`;
+}
 let tracker: TrackerClient | null = null;
 
 const setStatus = makeStatus(statusLine);
@@ -142,7 +158,7 @@ function render(result: RunResult): void {
   output.replaceChildren();
   output.append(
     para(
-      `${result.variant} | chunk ${result.chunkMs} ms | ${result.backend} | cores ${result.hardwareConcurrency} | load ${formatMs(result.loadMs)} ms`,
+      `${result.variant} | chunk ${result.chunkMs} ms${engineLabel(result.engineConfig)} | ${result.backend} | cores ${result.hardwareConcurrency} | load ${formatMs(result.loadMs)} ms`,
       "note ltr",
     ),
   );
@@ -281,6 +297,7 @@ async function run(recordings: File[], labelFiles: File[]): Promise<RunResult | 
     generatedAt: new Date().toISOString(),
     variant: variantId,
     chunkMs,
+    engineConfig: engineOverride,
     backend: BACKEND_LABEL,
     userAgent: navigator.userAgent,
     hardwareConcurrency: navigator.hardwareConcurrency,
@@ -295,6 +312,7 @@ async function run(recordings: File[], labelFiles: File[]): Promise<RunResult | 
 
   const { byRecording, byFileName, problems } = await loadLabelFiles(labelFiles);
   result.skipped.push(...problems);
+  if (settleIgnoredNote) result.skipped.push(settleIgnoredNote);
 
   let issues: IssueRecord[] = [];
   const client = new TrackerClient((message) => {
@@ -310,8 +328,10 @@ async function run(recordings: File[], labelFiles: File[]): Promise<RunResult | 
     // Fresh worker + init for every run (variant).
     setStatus(`جارٍ تحميل النموذج (${variantId})…`);
     const ready = client.next("ready");
-    client.post({ type: "init", variant: variantId });
-    result.loadMs = (await ready).loadMs;
+    client.post({ type: "init", variant: variantId, engine: engineOverride });
+    const readyMessage = await ready;
+    result.loadMs = readyMessage.loadMs;
+    result.engineConfig = readyMessage.engine; // what the worker really applied
 
     for (const [index, recording] of recordings.entries()) {
       const found = findLabels(recording, byRecording, byFileName);
@@ -361,7 +381,7 @@ async function run(recordings: File[], labelFiles: File[]): Promise<RunResult | 
     }
     setStatus(
       result.files.length > 0
-        ? `اكتمل: ${result.files.length} ملف (${variantId}، ${chunkMs} ms).`
+        ? `اكتمل: ${result.files.length} ملف (${variantId}، ${chunkMs} ms${result.engineConfig.settleFrames === undefined ? "" : `، settleFrames=${result.engineConfig.settleFrames}`}).`
         : "لم يُعالَج أي ملف: تأكد من مطابقة أسماء ملفات التعليم.",
       result.files.length === 0,
     );
@@ -396,6 +416,7 @@ function logsJson(result: RunResult): unknown {
   return {
     variant: result.variant,
     chunkMs: result.chunkMs,
+    engineConfig: result.engineConfig,
     backend: result.backend,
     userAgent: result.userAgent,
     files: result.files.map((f) => ({ recording: f.recording, log: f.log })),
@@ -407,6 +428,7 @@ function summaryJson(result: RunResult) {
   return {
     variant: result.variant,
     chunkMs: result.chunkMs,
+    engineConfig: result.engineConfig,
     backend: result.backend,
     userAgent: result.userAgent,
     hardwareConcurrency: result.hardwareConcurrency,

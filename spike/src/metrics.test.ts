@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { WorkerOutbound } from "@tilawa/core";
 import { AYAH_OFFSETS, AYAH_WORD_COUNTS, fromGlobalWordIndex } from "./fatiha";
 import type { Labels } from "./labels";
-import { aggregateMetrics, computeMetrics, entryFromEvents, flushEntryFromStopped, percentile, summarize, type EventLog, type EventLogEntry } from "./metrics";
+import { aggregateMetrics, computeMetrics, entryFromEvents, flushEntryFromStopped, percentile, summarize, type CompactVerdict, type EventLog, type EventLogEntry } from "./metrics";
 
 // Word w is spoken in [w, w + 0.8] seconds; its labelled end is w + 0.8.
 const labels: Labels = {
@@ -346,6 +346,31 @@ describe("log entry builders (pin the existing worker-message -> EventLogEntry m
       flush: true,
     });
     expect(Object.keys(entry)).toEqual(["chunkId", "audioTimeSec", "computeMs", "verdictsMs", "events", "confirmed", "flush"]);
+  });
+
+  it("copy the verdict list when the message has one (an empty list included) and keep the key absent otherwise", () => {
+    const verdicts: CompactVerdict[] = [
+      { w: 0, s: "ok", d: 0, h: 1, m: 2.5 },
+      { w: 1, s: "pending", d: 0.125, h: 0.5, m: 0 },
+    ];
+    const base = { samplesFed: 16000, computeMs: 1, verdictsMs: 1, confirmed: [0], events };
+    const withList = entryFromEvents({ type: "events", chunkId: 0, ...base, verdicts });
+    expect(withList.verdicts).toEqual(verdicts);
+    expect("verdicts" in entryFromEvents({ type: "events", chunkId: 0, ...base })).toBe(false);
+    expect(entryFromEvents({ type: "events", chunkId: 0, ...base, verdicts: [] }).verdicts).toEqual([]);
+
+    const flush = flushEntryFromStopped({ type: "stopped", ...base, verdicts });
+    expect(flush.verdicts).toEqual(verdicts);
+    expect(flush.flush).toBe(true);
+    expect("verdicts" in flushEntryFromStopped({ type: "stopped", ...base })).toBe(false);
+  });
+
+  it("verdicts do not change the metrics", () => {
+    const plain = log(cleanEntries());
+    const withVerdicts = log(
+      plain.entries.map((e, i) => (i % 3 === 0 ? { ...e, verdicts: [{ w: 0, s: "wrong" as const, d: 9, h: 0, m: 0 }] } : e)),
+    );
+    expect(computeMetrics(withVerdicts, labels)).toEqual(computeMetrics(plain, labels));
   });
 
   it("the builders' output feeds computeMetrics like a hand-built entry", () => {

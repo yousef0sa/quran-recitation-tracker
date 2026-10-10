@@ -8,6 +8,15 @@ import type { Labels } from "./labels";
 import type { WorkerToMain } from "./messages";
 import type { VariantId } from "./variants";
 
+/** One tilawa word verdict for a Fatiha word. w = global index 0..28; d/h/m = distance, heardRatio, margin rounded to 3 decimals. */
+export interface CompactVerdict {
+  w: number;
+  s: "ok" | "unsure" | "wrong" | "skipped" | "pending";
+  d: number;
+  h: number;
+  m: number;
+}
+
 export interface EventLogEntry {
   chunkId: number;
   /** samplesFed / 16000 after this chunk. */
@@ -24,6 +33,11 @@ export interface EventLogEntry {
    */
   confirmed?: number[];
   /**
+   * Full surah-1 verdict list after this chunk, present only when it differs from the previous entry's
+   * (an empty array means tilawa returned to search). Absent in older logs.
+   */
+  verdicts?: CompactVerdict[];
+  /**
    * Bench only: the entry built from the stop() result (after the +2 s tail inside stop()).
    * Its computeMs is the stop() time; it is kept out of the per-chunk compute stats but counts for RTF.
    */
@@ -39,6 +53,7 @@ export function entryFromEvents(message: Extract<WorkerToMain, { type: "events" 
     verdictsMs: message.verdictsMs,
     events: message.events,
     confirmed: message.confirmed,
+    ...(message.verdicts ? { verdicts: message.verdicts } : {}),
   };
 }
 
@@ -51,6 +66,7 @@ export function flushEntryFromStopped(message: Extract<WorkerToMain, { type: "st
     verdictsMs: message.verdictsMs,
     events: message.events,
     confirmed: message.confirmed,
+    ...(message.verdicts ? { verdicts: message.verdicts } : {}),
     flush: true,
   };
 }

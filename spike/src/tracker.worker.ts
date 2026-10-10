@@ -10,8 +10,10 @@ import {
   type WorkerOutbound,
   type ZipformerSession,
 } from "@tilawa/core";
+import type { EngineOverride } from "./engine-config";
 import type { MainToWorker, WorkerToMain } from "./messages";
 import { toGlobalWordIndex } from "./fatiha";
+import type { CompactVerdict } from "./metrics";
 import { CORPUS_PATH, VARIANTS, applyIoOverride, type VariantId } from "./variants";
 
 const scope = self as unknown as DedicatedWorkerGlobalScope;
@@ -30,6 +32,8 @@ class LoadError extends Error {}
 let session: ZipformerSession | null = null;
 let samplesFed = 0;
 let notReadyReported = false;
+/** JSON of the last verdict list seen this session; a list is logged only when it differs. */
+let lastVerdictKey = "";
 let queue: Promise<void> = Promise.resolve();
 
 function post(message: WorkerToMain): void {
@@ -75,11 +79,12 @@ async function fetchJson(path: string): Promise<unknown> {
   return JSON.parse(text);
 }
 
-async function initSession(variantId: VariantId): Promise<void> {
+async function initSession(variantId: VariantId, engine: EngineOverride = {}): Promise<void> {
   const started = performance.now();
   session = null;
   samplesFed = 0;
   notReadyReported = false;
+  lastVerdictKey = "";
   const variant = VARIANTS[variantId];
 
   ort.env.wasm.numThreads = 1;
@@ -94,6 +99,8 @@ async function initSession(variantId: VariantId): Promise<void> {
     structural: false,
     executionProviders: ["wasm"],
     ...(variant.io ? { io: applyIoOverride(DEFAULT_ZIPFORMER_IO, variant.io) } : {}),
+    // Omitted when empty, so a run without overrides takes the same code path as before this option existed.
+    ...(Object.keys(engine).length > 0 ? { config: engine } : {}),
   });
   if (variant.mode === "correction") {
     // setMode first: setExpected is ignored while the session is in tracking mode.
@@ -101,8 +108,8 @@ async function initSession(variantId: VariantId): Promise<void> {
     if (variant.expected) created.setExpected(variant.expected);
   }
   session = created;
-  console.info("[spike] model ready", { variant: variantId });
-  post({ type: "ready", loadMs: performance.now() - started, variant: variantId });
+  console.info("[spike] model ready", { variant: variantId, engine });
+  post({ type: "ready", loadMs: performance.now() - started, variant: variantId, engine });
 }
 
 /** The latest correction state in `events` if it leaves an issue open (feed() then returns [] until resolved). */
@@ -136,24 +143,42 @@ function resolveIssues(active: ZipformerSession, events: WorkerOutbound[], chunk
   return all;
 }
 
+function round3(value: number): number {
+  return Math.round(value * 1000) / 1000;
+}
+
 /**
- * Surah-1 words whose current verdict is "ok" or "unsure", as global Fatiha indices.
+ * One session.verdicts() call gives both
+ *  - `confirmed`: surah-1 words whose verdict is "ok" or "unsure", as global Fatiha indices, and
+ *  - `verdicts`: the full surah-1 list (mappable words, sorted), only when it differs from the previous
+ *    snapshot (or when `always` is set), so unchanged chunks add nothing to the log.
  * WordVerdict.word is the 0-based index within the ayah (wordIndex would be the whole-Quran index).
  * Timed separately from feed() so it never inflates computeMs.
  */
-function snapshotConfirmed(active: ZipformerSession): { confirmed: number[]; verdictsMs: number } {
+function snapshotVerdicts(
+  active: ZipformerSession,
+  always = false,
+): { confirmed: number[]; verdicts?: CompactVerdict[]; verdictsMs: number } {
   const started = performance.now();
   const confirmed: number[] = [];
+  const list: CompactVerdict[] = [];
   for (const verdict of active.verdicts()) {
-    if (verdict.surah !== 1 || (verdict.state !== "ok" && verdict.state !== "unsure")) continue;
+    if (verdict.surah !== 1) continue;
+    let w: number;
     try {
-      confirmed.push(toGlobalWordIndex(verdict.ayah, verdict.word));
+      w = toGlobalWordIndex(verdict.ayah, verdict.word);
     } catch {
-      // outside Al-Fatiha's word table: ignore
+      continue; // outside Al-Fatiha's word table: ignore
     }
+    if (verdict.state === "ok" || verdict.state === "unsure") confirmed.push(w);
+    list.push({ w, s: verdict.state, d: round3(verdict.distance), h: round3(verdict.heardRatio), m: round3(verdict.margin) });
   }
   confirmed.sort((a, b) => a - b);
-  return { confirmed, verdictsMs: performance.now() - started };
+  list.sort((a, b) => a.w - b.w);
+  const key = JSON.stringify(list);
+  const changed = key !== lastVerdictKey;
+  lastVerdictKey = key;
+  return { confirmed, ...(changed || always ? { verdicts: list } : {}), verdictsMs: performance.now() - started };
 }
 
 async function handleAudio(chunkId: number, samples: Float32Array): Promise<void> {
@@ -169,8 +194,8 @@ async function handleAudio(chunkId: number, samples: Float32Array): Promise<void
   const computeMs = performance.now() - started;
   samplesFed += samples.length;
   const resolved = resolveIssues(session, events, chunkId);
-  const { confirmed, verdictsMs } = snapshotConfirmed(session);
-  post({ type: "events", chunkId, samplesFed, computeMs, verdictsMs, confirmed, events: resolved });
+  const { confirmed, verdicts, verdictsMs } = snapshotVerdicts(session);
+  post({ type: "events", chunkId, samplesFed, computeMs, verdictsMs, confirmed, ...(verdicts ? { verdicts } : {}), events: resolved });
 }
 
 async function handleStop(): Promise<void> {
@@ -182,14 +207,14 @@ async function handleStop(): Promise<void> {
   const events = await session.stop();
   const computeMs = performance.now() - started;
   const resolved = resolveIssues(session, events, -1);
-  const { confirmed, verdictsMs } = snapshotConfirmed(session);
-  post({ type: "stopped", samplesFed, computeMs, verdictsMs, confirmed, events: resolved });
+  const { confirmed, verdicts, verdictsMs } = snapshotVerdicts(session, true);
+  post({ type: "stopped", samplesFed, computeMs, verdictsMs, confirmed, verdicts, events: resolved });
 }
 
 function handle(message: MainToWorker): Promise<void> {
   switch (message.type) {
     case "init":
-      return initSession(message.variant).catch((err: unknown) => {
+      return initSession(message.variant, message.engine).catch((err: unknown) => {
         session = null;
         post({ type: "error", stage: "load", message: loadMessage(err) });
       });
@@ -205,6 +230,7 @@ function handle(message: MainToWorker): Promise<void> {
       try {
         session?.reset();
         samplesFed = 0;
+        lastVerdictKey = "";
         post({ type: "resetDone" });
       } catch (err) {
         post({ type: "error", stage: "feed", message: describe(err) });

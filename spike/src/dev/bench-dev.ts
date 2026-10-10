@@ -1,8 +1,9 @@
 // Dev-only bench additions: use spike/recordings without file pickers, and URL autorun
-// (bench.html?autorun=1&variant=A1&chunk=150). Loaded via a dynamic import behind
-// `import.meta.env.DEV` in bench.ts.
+// (bench.html?autorun=1&variant=A1&chunk=150, plus &settle=12 to override tilawa's settleFrames).
+// Loaded via a dynamic import behind `import.meta.env.DEV` in bench.ts.
 import { CHUNK_MS_OPTIONS } from "../audio";
 import { errorMessage } from "../common";
+import { SETTLE_FRAMES_MAX, SETTLE_FRAMES_MIN, engineConfigSuffix, parseSettleFrames, type EngineOverride } from "../engine-config";
 import { fetchLabelsFile, fetchRecordingFile, listRecordings, postResult, resultFileName } from "./dev-api";
 import { isVariantId } from "../variants";
 
@@ -14,7 +15,7 @@ export interface BenchDevHost<R> {
   select(recordings: File[], labels: File[]): void;
   /** Null when nothing was selected to run. */
   run(): Promise<R | null>;
-  toResultsJson(result: R): { variant: string; chunkMs: number };
+  toResultsJson(result: R): { variant: string; chunkMs: number; engineConfig: EngineOverride };
   toLogsJson(result: R): unknown;
   toSummaryJson(result: R): Record<string, unknown>;
   didFail(result: R): boolean;
@@ -84,6 +85,11 @@ export function initBenchDev<R>(host: BenchDevHost<R>): void {
         }
         host.chunkSelect.value = chunk;
       }
+      // bench.ts reads ?settle= itself; here a bad value is an error instead of a silent fallback.
+      const settle = params.get("settle");
+      if (settle !== null && parseSettleFrames(settle) === null) {
+        throw new Error(`unsupported settle "${settle}" (integer ${SETTLE_FRAMES_MIN}-${SETTLE_FRAMES_MAX})`);
+      }
 
       const count = await useDevRecordings();
       if (count === 0) {
@@ -102,9 +108,13 @@ export function initBenchDev<R>(host: BenchDevHost<R>): void {
       const saved: string[] = [];
       let saveError: string | null = null;
       try {
-        saved.push(await postResult(resultFileName(now, results.variant, results.chunkMs, "results"), results));
+        const suffix = engineConfigSuffix(results.engineConfig);
+        saved.push(await postResult(resultFileName(now, results.variant, results.chunkMs, "results", suffix), results));
         saved.push(
-          await postResult(resultFileName(now, results.variant, results.chunkMs, "eventlogs"), host.toLogsJson(result)),
+          await postResult(
+            resultFileName(now, results.variant, results.chunkMs, "eventlogs", suffix),
+            host.toLogsJson(result),
+          ),
         );
       } catch (err) {
         saveError = errorMessage(err);
