@@ -1,6 +1,6 @@
 # Browser spike: live Al-Fatiha tracking / تجربة تتبع الفاتحة
 
-This spike measures whether the Quran-Lab zipformer model (through `@tilawa/core`, ONNX Runtime Web, WASM single thread) can follow a recitation of Al-Fatiha word by word inside the browser, fast enough. It has three pages:
+This spike measures whether the Quran-Lab zipformer model (through `@tilawa/core`, ONNX Runtime Web, WASM; 1 thread by default) can follow a recitation of Al-Fatiha word by word inside the browser, fast enough. It has three pages:
 
 | Page | Purpose |
 |---|---|
@@ -21,13 +21,17 @@ npm run fetch-assets   # downloads the NPL-1.2 model + corpus (about 150 MB), ve
 npm run dev            # http://localhost:5173/
 ```
 
-- Live: `http://localhost:5173/index.html` (choose the variant with `?variant=A1|A2|B1|B2`, default B2; the audio chunk size with `?chunk=80|150|300`, default 80 ms; the stats line shows both)
+- Live: `http://localhost:5173/index.html` (choose the variant with `?variant=A1|A2|B1|B2`, default B2; the audio chunk size with `?chunk=80|150|300`, default 80 ms; the WASM thread count with `?threads=1|2|4`, default 4 on a phone and 1 elsewhere (by user agent, provisional); the stats line shows all three)
 - Labeler: `http://localhost:5173/label.html`
 - Bench: `http://localhost:5173/bench.html`
 
 Other commands: `npm run typecheck`, `npm test`, `npm run build`.
 
-Never run the dev server with `--host` (or set `server.host`): the dev-only `/__dev/` harness serves your recordings and writes label and result files, so it refuses to start on a non-loopback host.
+Run the dev server on loopback only: never a bare `--host`, a LAN address or a non-loopback `server.host` (`--host 127.0.0.1` is loopback and fine). The dev-only `/__dev/` harness serves your recordings and writes label and result files, so it refuses to start on a non-loopback host.
+
+The dev and preview servers send `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp` on every response (`vite.config.ts`), so the pages are cross-origin isolated: ONNX Runtime needs SharedArrayBuffer for more than 1 WASM thread, and falls back to 1 without it. A browser that cached the pages before these headers may stay non-isolated: clear its cache for the site. In a production build (`vite preview`) more than 1 thread hangs at load (see `RESULTS.md`, follow-up 2).
+
+On an Android phone over USB (no LAN): start the server with `npm run dev -- --host 127.0.0.1 --port 5174 --strictPort` (the default listens on `[::1]`, which `adb reverse` cannot reach), run `adb reverse tcp:5174 tcp:5174`, and open `http://localhost:5174/` in Chrome on the phone (a secure context, so isolation works without HTTPS). To start a bench from the PC, quote the whole command for the device shell so `&` is not split: `adb shell "am start -a android.intent.action.VIEW -d 'http://localhost:5174/bench.html?autorun=1&variant=B2&chunk=80&threads=4' com.android.chrome"`.
 
 بعد `npm install` شغّل `npm run fetch-assets` (مرة واحدة)، ثم `npm run dev` وافتح الروابط أعلاه. إن ظهرت رسالة «شغّل الأمر npm run fetch-assets» فالنموذج غير منزَّل بعد.
 
@@ -62,7 +66,7 @@ Tap reaction adds roughly 100-250 ms of bias. Label at 0.5x to keep it small; th
 1. Open `bench.html`, select the recordings and their label files (a label file matches a recording when its `recording` field equals the file name, or its file name is `<recording base name>.labels.json`).
 2. Choose the variant and the chunk size (80 / 150 / 300 ms, default 80; the same list and default as the live page, defined in `src/audio.ts`), click Run. Files run one after another on a fresh model session for the run; the session is reset between files.
 3. Each file is fed in fixed chunks back-to-back, then **2.0 s of zeros** as ordinary chunks, then `stop()`. The last word's confirmation is read from the final "flush entry, after +2 s tail inside stop()". The padding counts toward audio duration and RTF.
-4. Download `results.json` (metrics, variant, chunk size, user agent, core count, backend "WASM single-thread") and, if wanted, the EventLogs.
+4. Download `results.json` (metrics, variant, chunk size, user agent, core count, backend, e.g. "WASM single-thread" or "WASM 4 threads", requested and effective thread count, `crossOriginIsolated`) and, if wanted, the EventLogs.
 
 Results are deterministic: the same file, variant and chunk size give identical latency numbers (compute times vary run to run).
 
@@ -71,6 +75,7 @@ Dev bench folder: `bench.html?autorun=1&variant=B2&chunk=80&dir=trust` (and the 
 Engine override and verdict log:
 
 - `bench.html?settle=<1..200>` overrides tilawa's `settleFrames` (default 25 frames = 1 s at 25 Hz; the engine decodes 8 frames per 320 ms step, so it acts in whole steps). It is read from the URL only (no control on the page, not on the live page); an invalid value falls back to the default and is noted in the run, and the dev autorun (`?autorun=1&variant=B2&chunk=80&settle=12`) rejects it with an error. The value actually applied is recorded as `engineConfig` in the results and EventLog JSON (`{}` = defaults) and shown in the page header; dev autorun result files get a `_settle<n>` part (`<time>_B2_80ms_settle12_results.json`).
+- `bench.html?threads=1|2|4` sets the WASM thread count (default 4 on a phone, else 1; invalid falls back to that default with a note, the dev autorun rejects it). The results, summary and EventLog JSON record `requestedThreads`, `threads` (what ONNX Runtime really used) and `crossOriginIsolated`; labels and file names use the effective count: dev autorun files get `_t<n>` (`<time>_B2_80ms_t4_results.json`), and a run that fell back gets `_req<N>` and ends as an error.
 - Each EventLog entry may carry `verdicts`: the full Al-Fatiha tilawa verdict list (`w` global word index 0-28, `s` state `ok|unsure|wrong|skipped|pending`, `d` distance, `h` heard ratio, `m` margin), written only when it differs from the previous entry's. An empty list means tilawa went back to search. The final entry (`flush`) always has one. Older logs have no `verdicts`.
 - `node scripts/verdict-report.ts <results.json> <eventlogs.json> [--word 1:6:1 ...]` (Node 22.18+ or newer, which strips types by default) prints the per-word confirm table, ayah-end / interior latency, every word whose verdict was ever `wrong` or `skipped` (with all-correct recordings these are false alarms), and a timeline of the verdicts, cursor and verse events for each `--word <surah>:<ayah>:<word in ayah, 1-based>`. It prints positions and numbers only, never text.
 
@@ -83,7 +88,7 @@ What the columns mean:
 - **restarts**: backward cursor moves. **lock s**: audio time of the first Al-Fatiha `word_progress`.
 - **compute**: time of each `feed()` call only. **RTF** = total compute / total audio duration (padding included). **RTF+verdicts** adds the time of the verdict snapshot.
 
-Always read numbers together with the browser, device, backend (WASM single-thread) and chunk size; compare only within one setup.
+Always read numbers together with the browser, device, backend (WASM thread count) and chunk size; compare only within one setup.
 
 الأرقام تُقارَن فقط داخل نفس المتصفح والجهاز والخلفية وحجم القطعة. انسخ النتائج إلى `RESULTS.md`.
 

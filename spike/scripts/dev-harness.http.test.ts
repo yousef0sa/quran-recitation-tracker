@@ -216,7 +216,7 @@ describe("startup assertion", () => {
       const plugin = devHarness();
       expect(() =>
         (plugin.configureServer as (s: unknown) => void)({ config: { server: { host } }, middlewares: { use: () => undefined } }),
-      ).toThrow(/never run the dev server with --host/);
+      ).toThrow(/never a bare --host/);
     }
   });
 });

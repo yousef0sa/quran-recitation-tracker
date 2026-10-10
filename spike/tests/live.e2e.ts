@@ -1,7 +1,7 @@
 // index.html: the live mic page. getUserMedia is replaced in the page (fixtures.installFakeMic) by
 // silence, a refusal, or one of your labelled recordings, so no real microphone is needed.
 // Missing assets are simulated by answering the asset request with 404.
-// Defaults: variant B2, 80 ms chunks (both selectable from the URL: ?variant=, ?chunk=).
+// Defaults: variant B2, 80 ms chunks, 1 WASM thread (selectable from the URL: ?variant=, ?chunk=, ?threads=).
 import { beforeEach, describe, test } from "@e2e-dev/web";
 import type { Browser } from "@e2e-dev/web";
 import { expect } from "e2e";
@@ -140,6 +140,19 @@ describe("live page", () => {
   test("an unsupported ?chunk= falls back to 80 ms", async ({ app, browser }) => {
     await openLive(app, browser, { kind: "silence" }, "?chunk=100");
     await expect(browser.locator("#stat-backend")).toHaveText("B2 / 80 ms / WASM single-thread");
+  });
+
+  test("the page is cross-origin isolated, so WASM threads can run", async ({ app, browser }) => {
+    await openLive(app, browser, { kind: "silence" });
+    await expect.poll(() => browser.evaluate(() => self.crossOriginIsolated === true && typeof SharedArrayBuffer === "function")).toBe(true);
+  });
+
+  test("?threads=2 reports the effective thread count once the model is ready", async ({ app, screen, browser }) => {
+    test.skip(!hasAssets(), NO_ASSETS);
+    await openLive(app, browser, { kind: "silence" }, "?threads=2");
+    // Before ready the label shows the requested count, so only assert after Start is enabled.
+    await expect(screen.getByRole("button", START)).toBeEnabled({ timeout: MODEL_READY });
+    await expect(browser.locator("#stat-backend")).toHaveText("B2 / 80 ms / WASM 2 threads");
   });
 
   test("a missing corpus tells you to run fetch-assets", async ({ app, screen, browser }) => {

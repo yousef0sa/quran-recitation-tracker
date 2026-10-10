@@ -60,7 +60,8 @@ function pad(n: number): string {
 
 /**
  * `<YYYYMMDD-HHmmss>_<variant>_<chunk>ms[<suffix>][_<dir>]_<kind>.json` in local time; the suffix names engine
- * overrides (e.g. `_settle12`), `dir` the recordings subfolder the run used.
+ * overrides and WASM threads (e.g. `_settle12_t4`; `_req<N>` when the run got fewer threads than requested),
+ * `dir` the recordings subfolder the run used.
  */
 export function resultFileName(
   date: Date,

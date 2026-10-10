@@ -2,7 +2,6 @@
 import { AYAH_OFFSETS, AYAH_WORD_COUNTS, loadFatihaDisplayWords } from "./fatiha";
 import { CORPUS_PATH, VARIANT_IDS, VARIANTS, parseVariantId, type VariantId } from "./variants";
 
-export const BACKEND_LABEL = "WASM single-thread";
 const FETCH_HINT_AR = "شغّل الأمر npm run fetch-assets داخل مجلد spike ثم أعد تحميل الصفحة";
 
 export function el<T extends HTMLElement>(id: string): T {
