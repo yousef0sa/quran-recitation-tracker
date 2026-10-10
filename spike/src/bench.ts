@@ -108,7 +108,7 @@ const settleIgnoredNote =
 
 /** `?threads=`: absent or invalid uses the device default (4 on a phone, else 1); invalid is noted in the run. */
 const threadsParam = new URLSearchParams(location.search).get("threads");
-const requestedThreads = parseThreads(threadsParam, defaultThreads(navigator.userAgent));
+const requestedThreads = parseThreads(threadsParam, defaultThreads(navigator.userAgent, import.meta.env.DEV));
 const threadsIgnoredNote =
   threadsParam !== null && String(requestedThreads) !== threadsParam
     ? `قيمة threads غير صالحة (${threadsParam}): استُخدم العدد الافتراضي ${requestedThreads} / invalid threads ignored, default ${requestedThreads} used`

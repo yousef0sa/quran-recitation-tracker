@@ -24,12 +24,18 @@ describe("parseThreads", () => {
 });
 
 describe("defaultThreads", () => {
-  it("uses PHONE_THREADS on phones and DEFAULT_THREADS elsewhere", () => {
+  const android = "Mozilla/5.0 (Linux; Android 9; Redmi Note 8) AppleWebKit/537.36 Chrome/138.0.0.0 Mobile Safari/537.36";
+
+  it("uses PHONE_THREADS on phones and DEFAULT_THREADS elsewhere on the dev server", () => {
     expect(PHONE_THREADS).toBe(4);
-    expect(defaultThreads("Mozilla/5.0 (Linux; Android 9; Redmi Note 8) AppleWebKit/537.36 Chrome/138.0.0.0 Mobile Safari/537.36")).toBe(4);
-    expect(defaultThreads("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148")).toBe(4);
-    expect(defaultThreads("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/153.0.0.0 Safari/537.36")).toBe(1);
-    expect(defaultThreads("")).toBe(1);
+    expect(defaultThreads(android, true)).toBe(4);
+    expect(defaultThreads("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148", true)).toBe(4);
+    expect(defaultThreads("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/153.0.0.0 Safari/537.36", true)).toBe(1);
+    expect(defaultThreads("", true)).toBe(1);
+  });
+
+  it("stays on 1 thread in a production build, where more threads hang at load", () => {
+    expect(defaultThreads(android, false)).toBe(1);
   });
 
   it("is the fallback of parseThreads", () => {
