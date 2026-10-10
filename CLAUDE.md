@@ -26,4 +26,4 @@ npm run test:e2e       # browser tests; one: npx e2e run tests/live.e2e.ts --gre
 
 ## Gotcha
 
-- The audio chunk size is duplicated in `src/audio.ts`, `src/live.ts` and `public/audio-processor.js`, and no test ties them together: change all three at once.
+- The audio chunk size is defined only in `src/audio.ts` (`CHUNK_MS_OPTIONS`, `DEFAULT_CHUNK_MS`); the live page reads `?chunk=` and the worklet gets its size through `processorOptions`, so there is nothing to keep in sync. Do not add a size constant to `public/audio-processor.js`.

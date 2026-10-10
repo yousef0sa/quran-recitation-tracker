@@ -42,9 +42,12 @@ export function labelsFile(path: string, recording: string, step = 0.5): string 
 
 /** True when `npm run fetch-assets` has run (models and corpus are git-ignored). */
 export function hasAssets(): boolean {
-  return ["public/data/zipformer_quran.json", "public/models/zipformer_a0w_ep1_a05.int8.onnx"].every((p) =>
-    existsSync(resolve(p)),
-  );
+  // Both models: the default variant (B2) uses the c16 one, A1/A2 the a0w one.
+  return [
+    "public/data/zipformer_quran.json",
+    "public/models/zipformer_a0w_ep1_a05.int8.onnx",
+    "public/models/zipformer_p_arabic_v3_c16.int8.onnx",
+  ].every((p) => existsSync(resolve(p)));
 }
 export const NO_ASSETS = "models/corpus missing: run npm run fetch-assets";
 

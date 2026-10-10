@@ -40,11 +40,15 @@ describe("bench page", () => {
     await app.open("/bench.html");
   });
 
-  test("starts with downloads locked and explains what to choose", async ({ screen }) => {
+  test("starts with downloads locked and explains what to choose", async ({ screen, browser }) => {
     await expect(screen.getByRole("button", RUN)).toBeEnabled();
     await expect(screen.getByRole("button", RESULTS)).toBeDisabled();
     await expect(screen.getByRole("button", LOGS)).toBeDisabled();
     await expect(screen.getByRole("status")).toContainText("اختر التسجيلات وملفات تعليمها");
+    // Defaults: variant B2, chunk 80 ms; the chunk options come from CHUNK_MS_OPTIONS in src/audio.ts.
+    await expect(browser.locator("#variant")).toHaveValue("B2");
+    await expect(browser.locator("#chunk")).toHaveValue("80");
+    await expect(browser.locator("#chunk option")).toHaveCount(3);
   });
 
   test("Run without files asks for recordings and labels", async ({ screen, browser }) => {
@@ -58,7 +62,7 @@ describe("bench page", () => {
     test.skip(!hasAssets(), NO_ASSETS);
     await choose(browser, [RECORDING], [LABELS]);
     await screen.getByRole("button", RUN).tap();
-    await expect(screen.getByRole("status")).toHaveText("اكتمل: 1 ملف (A1، 150 ms).", { timeout: RUN_DONE });
+    await expect(screen.getByRole("status")).toHaveText("اكتمل: 1 ملف (B2، 80 ms).", { timeout: RUN_DONE });
     await expect(screen.getByRole("button", RUN)).toBeEnabled();
     await expect(screen.getByRole("button", RESULTS)).toBeEnabled();
     await expect(screen.getByRole("button", LOGS)).toBeEnabled();
@@ -71,10 +75,10 @@ describe("bench page", () => {
 
     await captureBlobs(browser);
     const file = await browser.waitForDownload(() => screen.getByRole("button", RESULTS).tap());
-    expect(file.suggestedFilename).toBe("results-A1-150ms.json");
+    expect(file.suggestedFilename).toBe("results-B2-80ms.json");
     const results = await lastBlobJson<Results>(browser);
-    expect(results.variant).toBe("A1");
-    expect(results.chunkMs).toBe(150);
+    expect(results.variant).toBe("B2");
+    expect(results.chunkMs).toBe(80);
     expect(results.tailPaddingSec).toBe(2);
     expect(results.error).toBeUndefined();
     expect(results.skipped).toEqual([]);
@@ -88,7 +92,7 @@ describe("bench page", () => {
     expect(results.aggregate).toMatchObject({ files: 1, totalWords: 29, confirmedWords: 0 });
 
     const logs = await browser.waitForDownload(() => screen.getByRole("button", LOGS).tap());
-    expect(logs.suggestedFilename).toBe("eventlogs-A1-150ms.json");
+    expect(logs.suggestedFilename).toBe("eventlogs-B2-80ms.json");
     const eventlogs = await lastBlobJson<{ files: { recording: string; log: { entries: unknown[] } }[] }>(browser);
     expect(eventlogs.files).toHaveLength(1);
     expect(eventlogs.files[0]!.log.entries.length).toBeGreaterThan(1);

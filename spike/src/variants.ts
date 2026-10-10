@@ -3,7 +3,7 @@ import type { ZipformerIo } from "@tilawa/core";
 
 export type VariantId = "A1" | "A2" | "B1" | "B2";
 export const VARIANT_IDS: readonly VariantId[] = ["A1", "A2", "B1", "B2"];
-export const DEFAULT_VARIANT: VariantId = "A1";
+export const DEFAULT_VARIANT: VariantId = "B2";
 
 /** Override of tilawa's bundled I/O manifest (only what differs for the c16 export). */
 export interface IoOverride {
@@ -70,7 +70,7 @@ export function isVariantId(value: unknown): value is VariantId {
   return typeof value === "string" && (VARIANT_IDS as readonly string[]).includes(value);
 }
 
-/** `?variant=A1|A2|B1|B2`; anything else falls back to A1. */
+/** `?variant=A1|A2|B1|B2`; anything else falls back to B2. */
 export function parseVariantId(value: string | null | undefined): VariantId {
   return isVariantId(value) ? value : DEFAULT_VARIANT;
 }

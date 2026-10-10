@@ -1,5 +1,6 @@
 // Live mic page: words highlight as you recite; stats on screen; EventLog downloadable.
-import { startMic, MicError, TARGET_RATE, type MicHandle } from "./audio";
+// `?variant=` picks the variant (default B2) and `?chunk=` the audio chunk size (default 80 ms; see src/audio.ts).
+import { startMic, parseChunkMs, MicError, TARGET_RATE, type MicHandle } from "./audio";
 import {
   BACKEND_LABEL,
   downloadJson,
@@ -16,8 +17,7 @@ import { entryFromEvents, flushEntryFromStopped, summarize, type EventLog } from
 import { INITIAL_PROGRESS, updateProgress, type ProgressState } from "./progress";
 import { TrackerClient } from "./tracker-client";
 
-// 150 ms must match the worklet chunk size (CHUNK_SAMPLES in public/audio-processor.js and src/audio.ts).
-const CHUNK_MS = 150;
+const chunkMs = parseChunkMs(new URLSearchParams(location.search).get("chunk"));
 
 const variantSelect = el<HTMLSelectElement>("variant");
 const variantId = initVariantSelect(variantSelect);
@@ -38,7 +38,7 @@ let epoch = 0;
 /** True between the Stop click and the worker's "stopped" (or an error): Start, the variant select and Download stay disabled. */
 let stopping = false;
 let loadMs: number | null = null;
-let log: EventLog = { variant: variantId, chunkMs: CHUNK_MS, entries: [] };
+let log: EventLog = { variant: variantId, chunkMs, entries: [] };
 const arrival = new Map<number, number>();
 const computeValues: number[] = [];
 const lagValues: number[] = [];
@@ -61,7 +61,7 @@ function renderStats(): void {
   el("stat-compute").textContent = compute ? `${formatMs(compute.p50, 1)} / ${formatMs(compute.p95, 1)}` : "-";
   el("stat-rtf").textContent = audioSec > 0 ? (computeSum / (audioSec * 1000)).toFixed(3) : "-";
   el("stat-lag").textContent = lag ? `${formatMs(lag.p50)} / ${formatMs(lag.p95)}` : "-";
-  el("stat-backend").textContent = `${variantId} / ${BACKEND_LABEL}`;
+  el("stat-backend").textContent = `${variantId} / ${chunkMs} ms / ${BACKEND_LABEL}`;
 }
 
 function onEvents(message: Extract<WorkerToMain, { type: "events" }>): void {
@@ -136,7 +136,7 @@ function resetSession(): void {
   tracker.post({ type: "reset" });
   progress = INITIAL_PROGRESS;
   paintProgress();
-  log = { variant: variantId, chunkMs: CHUNK_MS, entries: [] };
+  log = { variant: variantId, chunkMs, entries: [] };
   arrival.clear();
   computeValues.length = 0;
   lagValues.length = 0;
@@ -159,7 +159,7 @@ startButton.addEventListener("click", () => {
     const id = chunkId++;
     arrival.set(id, arrivalMs);
     tracker.post({ type: "audio", chunkId: id, samples }, [samples.buffer]);
-  })
+  }, chunkMs)
     .then((handle) => {
       mic = handle;
       stopButton.disabled = false;
@@ -198,7 +198,10 @@ downloadButton.addEventListener("click", () => {
 });
 
 variantSelect.addEventListener("change", () => {
-  location.search = `?variant=${variantSelect.value}`;
+  // Keep the other query params (e.g. ?chunk=); only the variant changes.
+  const params = new URLSearchParams(location.search);
+  params.set("variant", variantSelect.value);
+  location.search = `?${params}`;
 });
 
 renderStats();

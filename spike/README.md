@@ -21,7 +21,7 @@ npm run fetch-assets   # downloads the NPL-1.2 model + corpus (about 150 MB), ve
 npm run dev            # http://localhost:5173/
 ```
 
-- Live: `http://localhost:5173/index.html` (choose the variant with `?variant=A1|A2|B1|B2`, default A1)
+- Live: `http://localhost:5173/index.html` (choose the variant with `?variant=A1|A2|B1|B2`, default B2; the audio chunk size with `?chunk=80|150|300`, default 80 ms; the stats line shows both)
 - Labeler: `http://localhost:5173/label.html`
 - Bench: `http://localhost:5173/bench.html`
 
@@ -35,10 +35,10 @@ Never run the dev server with `--host` (or set `server.host`): the dev-only `/__
 
 | Id | What |
 |---|---|
-| A1 | tilawa default model (a0w), tracking mode. Primary. |
+| A1 | tilawa default model (a0w), tracking mode. |
 | A2 | same model, correction mode with the expected passage set to Al-Fatiha; any correction issue is logged and auto-closed so feeding continues |
 | B1 | raw Quran-Lab v3 export, 320 ms hop (stretch: if it fails to load the error is shown and A1/A2 are unaffected) |
-| B2 | same model and io override as B1, with A2's correction mode and expected passage Al-Fatiha (stretch) |
+| B2 | same model and io override as B1, with A2's correction mode and expected passage Al-Fatiha (stretch). **Default** (best result in `RESULTS.md`) |
 
 ## 3. Record / التسجيل
 
@@ -60,7 +60,7 @@ Tap reaction adds roughly 100-250 ms of bias. Label at 0.5x to keep it small; th
 ## 5. Bench and read the results / القياس وقراءة النتائج
 
 1. Open `bench.html`, select the recordings and their label files (a label file matches a recording when its `recording` field equals the file name, or its file name is `<recording base name>.labels.json`).
-2. Choose the variant and the chunk size (80 / 150 / 300 ms, default 150), click Run. Files run one after another on a fresh model session for the run; the session is reset between files.
+2. Choose the variant and the chunk size (80 / 150 / 300 ms, default 80; the same list and default as the live page, defined in `src/audio.ts`), click Run. Files run one after another on a fresh model session for the run; the session is reset between files.
 3. Each file is fed in fixed chunks back-to-back, then **2.0 s of zeros** as ordinary chunks, then `stop()`. The last word's confirmation is read from the final "flush entry, after +2 s tail inside stop()". The padding counts toward audio duration and RTF.
 4. Download `results.json` (metrics, variant, chunk size, user agent, core count, backend "WASM single-thread") and, if wanted, the EventLogs.
 
@@ -68,8 +68,8 @@ Results are deterministic: the same file, variant and chunk size give identical 
 
 What the columns mean:
 
-- **cursor ms**: time from the labelled word end until the tracker cursor first moves past that word (the earliest end-of-word signal). Word 29 has none (no next word).
-- **confirm ms**: time from the labelled word end until the word first shows as matched, either in `word_progress.matched_indices` or in the verdict snapshot taken after each chunk. These two sources have different settling rules, so the earlier of them is used. This is the only way to see ayah-final words once the cursor has moved on.
+- **confirm ms**: **the project's latency metric** (decided 2026-10-08): time from the labelled word end until the word first shows as matched (turns green), either in `word_progress.matched_indices` or in the verdict snapshot taken after each chunk. These two sources have different settling rules, so the earlier of them is used. This is the only way to see ayah-final words once the cursor has moved on.
+- **cursor ms**: time from the labelled word end until the tracker cursor first moves past that word. Expected to be the earliest signal, but measured about 2x later than confirm, so it is kept for comparison only. Word 29 has none (no next word).
 - **tracked**: words ever confirmed out of 29. **missed words**: numbers (1-29) never confirmed.
 - **false adv.**: words the cursor passed before the word started (labelled start, or the previous word's end if no starts).
 - **restarts**: backward cursor moves. **lock s**: audio time of the first Al-Fatiha `word_progress`.

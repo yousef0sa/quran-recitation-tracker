@@ -93,7 +93,7 @@ describe("public/audio-processor.js stays in sync with the resampler", () => {
     process(inputs: Float32Array[][]): boolean;
   };
 
-  function loadWorklet(sampleRate: number, posted: Float32Array[]): Processor {
+  function loadWorklet(sampleRate: number, posted: Float32Array[], options: unknown): Processor {
     let ctor: (new () => Processor) | undefined;
     class FakeBase {
       port = {
@@ -105,13 +105,16 @@ describe("public/audio-processor.js stays in sync with the resampler", () => {
     const factory = new Function("AudioWorkletProcessor", "registerProcessor", "sampleRate", "currentTime", workletSource);
     factory(FakeBase, (_name: string, c: new () => Processor) => (ctor = c), sampleRate, 0);
     if (!ctor) throw new Error("worklet did not register a processor");
-    return new ctor();
+    return new (ctor as new (options: unknown) => Processor)(options);
   }
 
-  it.each([48000, 44100, 16000])("emits 2400-sample chunks equal to the resampler output (%i Hz)", (rate) => {
+  const sizes = [1280, 2400, 4800];
+  const cases = [48000, 44100, 16000].flatMap((rate) => sizes.map((size) => [rate, size] as const));
+
+  it.each(cases)("emits chunks of the requested size equal to the resampler output (%i Hz, %i samples)", (rate, size) => {
     const posted: Float32Array[] = [];
-    const worklet = loadWorklet(rate, posted);
-    const input = sine(rate, 1);
+    const worklet = loadWorklet(rate, posted, { processorOptions: { chunkSamples: size } });
+    const input = sine(rate, 2);
     const reference = createLinearResampler(rate, 16000);
     const expected: number[] = [];
     for (let at = 0; at < input.length; at += 128) {
@@ -120,8 +123,20 @@ describe("public/audio-processor.js stays in sync with the resampler", () => {
       expected.push(...reference.process(block));
     }
     expect(posted.length).toBeGreaterThanOrEqual(5);
-    posted.forEach((chunk) => expect(chunk.length).toBe(2400));
+    posted.forEach((chunk) => expect(chunk.length).toBe(size));
     const got = posted.flatMap((c) => Array.from(c));
     expect(got).toEqual(expected.slice(0, got.length));
+  });
+
+  it.each([
+    ["no options", undefined],
+    ["no processorOptions", {}],
+    ["a missing chunkSamples", { processorOptions: {} }],
+    ["zero", { processorOptions: { chunkSamples: 0 } }],
+    ["a negative size", { processorOptions: { chunkSamples: -1280 } }],
+    ["a fraction", { processorOptions: { chunkSamples: 12.5 } }],
+    ["a string", { processorOptions: { chunkSamples: "1280" } }],
+  ])("refuses to start with %s (no hardcoded fallback)", (_name, options) => {
+    expect(() => loadWorklet(16000, [], options)).toThrow(/chunkSamples/);
   });
 });
