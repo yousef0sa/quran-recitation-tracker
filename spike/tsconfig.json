@@ -12,5 +12,5 @@
     "isolatedModules": true,
     "resolveJsonModule": true
   },
-  "include": ["src", "scripts/dev-harness*.ts", "vite.config.ts"]
+  "include": ["src", "scripts/dev-harness*.ts", "scripts/verdict-report*.ts", "vite.config.ts"]
 }

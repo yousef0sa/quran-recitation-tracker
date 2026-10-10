@@ -53,8 +53,14 @@ function pad(n: number): string {
   return String(n).padStart(2, "0");
 }
 
-/** `<YYYYMMDD-HHmmss>_<variant>_<chunk>ms_<kind>.json` in local time. */
-export function resultFileName(date: Date, variant: string, chunkMs: number, kind: "results" | "eventlogs"): string {
+/** `<YYYYMMDD-HHmmss>_<variant>_<chunk>ms[<suffix>]_<kind>.json` in local time; the suffix names engine overrides (e.g. `_settle12`). */
+export function resultFileName(
+  date: Date,
+  variant: string,
+  chunkMs: number,
+  kind: "results" | "eventlogs",
+  suffix = "",
+): string {
   const stamp = `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
-  return `${stamp}_${variant}_${chunkMs}ms_${kind}.json`;
+  return `${stamp}_${variant}_${chunkMs}ms${suffix}_${kind}.json`;
 }

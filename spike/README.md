@@ -66,6 +66,12 @@ Tap reaction adds roughly 100-250 ms of bias. Label at 0.5x to keep it small; th
 
 Results are deterministic: the same file, variant and chunk size give identical latency numbers (compute times vary run to run).
 
+Engine override and verdict log:
+
+- `bench.html?settle=<1..200>` overrides tilawa's `settleFrames` (default 25 frames = 1 s at 25 Hz; the engine decodes 8 frames per 320 ms step, so it acts in whole steps). It is read from the URL only (no control on the page, not on the live page); an invalid value falls back to the default and is noted in the run, and the dev autorun (`?autorun=1&variant=B2&chunk=80&settle=12`) rejects it with an error. The value actually applied is recorded as `engineConfig` in the results and EventLog JSON (`{}` = defaults) and shown in the page header; dev autorun result files get a `_settle<n>` part (`<time>_B2_80ms_settle12_results.json`).
+- Each EventLog entry may carry `verdicts`: the full Al-Fatiha tilawa verdict list (`w` global word index 0-28, `s` state `ok|unsure|wrong|skipped|pending`, `d` distance, `h` heard ratio, `m` margin), written only when it differs from the previous entry's. An empty list means tilawa went back to search. The final entry (`flush`) always has one. Older logs have no `verdicts`.
+- `node scripts/verdict-report.ts <results.json> <eventlogs.json> [--word 1:6:1 ...]` (Node 22.18+ or newer, which strips types by default) prints the per-word confirm table, ayah-end / interior latency, every word whose verdict was ever `wrong` or `skipped` (with all-correct recordings these are false alarms), and a timeline of the verdicts, cursor and verse events for each `--word <surah>:<ayah>:<word in ayah, 1-based>`. It prints positions and numbers only, never text.
+
 What the columns mean:
 
 - **confirm ms**: **the project's latency metric** (decided 2026-10-08): time from the labelled word end until the word first shows as matched (turns green), either in `word_progress.matched_indices` or in the verdict snapshot taken after each chunk. These two sources have different settling rules, so the earlier of them is used. This is the only way to see ayah-final words once the cursor has moved on.
@@ -86,5 +92,6 @@ See `RESULTS.md`.
 ## Layout
 
 - `src/fatiha.ts` word table and mappings; `src/metrics.ts` latency/accuracy; `src/labels.ts` label format; `src/resample.ts` + `public/audio-processor.js` 16 kHz resampling (keep in sync); `src/tracker.worker.ts` model session; `src/tracker-client.ts`, `src/progress.ts`, `src/common.ts` page helpers.
+- `src/engine-config.ts` bench-only tilawa override (`?settle=`); `scripts/verdict-report.ts` offline report on a results + EventLog pair.
 - `scripts/assets.json` is the only place with asset URLs and hashes; `src/variants.ts` is the only place with variant settings.
 - Display text is tilawa's plain Uthmani, temporary until the KFGQPC text is integrated.
