@@ -159,6 +159,90 @@ Setup: B2 @ 80 ms, headless Chromium 153.0.8010.12, WASM single-thread, `@tilawa
 - **Ayah-end latency is not reported for this set**: many ayah-end words are confirmed before their labelled end (down to -2.2 s), so the ayah-end labels here sit after the long vowel or the breath. The interior numbers match the maintainer's set (335 / 1064 vs 375 / 1035 ms).
 - Limits: clean studio audio by professional reciters is easier than a phone mic in a room. This set shows that correct readings are not flagged; it says nothing about catching real mistakes.
 
+## Follow-up 6: speed and accuracy experiments (2026-10-11)
+
+> المتابعة 6: اختبرنا أفكار البحث قبل اعتماد أي شيء.
+> - 4 خيوط تسرّع الكمبيوتر 1.6× بنفس النتائج تمامًا، وصارت تعمل في نسخة الإنتاج خلف مفتاح تجريبي.
+> - fp32 أبطأ من int8، فرفضناه.
+> - نموذج a0w أسرع بنحو 25% لكنه أقل دقة على تسجيلاتك، فرفضناه.
+> - بوابة «صمت أم مد» لنهاية الآية آمنة على تسجيلاتك، لكن فائدتها شبه معدومة، وفيها حالات مبكرة على مجموعة الثقة. وبوابة احتمال الفراغ (CTC) تؤكد أثناء المد، فرفضناها.
+> - قياسات الجوال لم تُشغَّل بعد.
+>
+> لم يتغيّر أي إعداد افتراضي.
+
+Plan: `.claude/PRPs/plans/speed-accuracy-experiments.plan.md`. Research: `.claude/PRPs/research/research-speed-accuracy.md`. Setup: headless Chromium 153.0.8010.12, Windows desktop with 8 cores, ORT WASM (onnxruntime-web 1.24.2), `@tilawa/core` 0.4.0, chunk 80 ms, dev server on loopback. Raw data: `spike/results/20261011-*` (git-ignored).
+
+Accuracy guards, per set: tracked; words ever `wrong`/`skipped`; issues; false advances; restarts; interior confirm; first lock. Each set is compared at the same thread count with `scripts/compare-runs.ts`. Speed rule: 3 interleaved maintainer runs per side. "Faster" means every candidate run beats every baseline run by more than the baseline's own spread, with RTF moving the same way.
+
+**Controls.**
+- New baselines (`20261011-133745` t1, `-133945` t4, and their trust runs) are per-word identical to the 2026-10-10 runs, so there is no browser drift.
+- Two t4 runs are identical, so t4 is deterministic on this desktop.
+- The timed-session wrapper (the model runs through `{session, Tensor}` instead of tilawa's own `create`) is per-word identical on both sets at t1 and t4.
+- `?model=` with the shipped file is identical.
+
+**What the model is.** Checked with `scripts/model/inspect_model.py`:
+- ir 7, opset 13;
+- 290 `MatMulInteger` and 264 `DynamicQuantizeLinear`, all per-tensor QInt8;
+- 80 float `MatMul`, 70 `Conv`; T 45, left context 256.
+
+ORT's CPU optimizer already fuses the quantized MatMuls (242 `DynamicQuantizeMatMul` + 48 `MatMulIntegerToFloat`), so there is no unfused graph to fix. The model is already per-tensor, so the per-tensor re-quantization (M5) was skipped.
+
+### Desktop results (maintainer set: 3 runs each; trust set: 1 run each)
+
+| Lever | Config | Model step p50 (ms) | Model ms per audio s | RTF | Accuracy (both sets) | Verdict |
+|---|---|---|---|---|---|---|
+| — | B2 int8, t1 (M1) | 46.6-47.1 | 155-160 | 0.162-0.166 | baseline: 143/145, the same 3 ever-wrong, 0 issues; trust 232/232, 0 | — |
+| S1 | B2 int8, t4 (M2) | 28.3-30.4 | 104-108 | 0.111-0.115 | identical to t1 on both sets | **faster (≈1.6×), accuracy identical** |
+| S2 | B2 dequantized fp32, t1 (M3) | 60.7-62.8 | 204-220 | 0.211-0.226 | identical to M1 | **slower** (and 263 MB instead of 73 MB) |
+| S2 | B2 dequantized fp32, t4 (M4) | 35.1-42.5 | 124-148 | 0.130-0.154 | identical to M2 | **slower** |
+| A1 | A2 (a0w, 480 ms step), t1 (M6) | 50.6-53.8 | 116-120 | 0.120-0.125 | maintainer **137/145, 11 ever wrong/skipped, 1 issue**; trust 232/232, 0, interior p95 935 vs 1064 | **faster by ms/audio s, fails accuracy** |
+| A1 | A2, t4 (M7) | 29.1-32.2 | 69-74 | 0.074-0.079 | maintainer **142/145, 6 ever wrong/skipped**; trust 232/232, 0, interior p95 927 | **faster, fails accuracy** |
+
+- **Prod threads (S1).** The flagged build runs 4 threads with 3 pthread workers and `crossOriginIsolated`: `VITE_EXPERIMENT_PROD_THREADS=1 npm run build`, preview on loopback, ORT's own `.mjs`/`.wasm` via `wasmPaths`.
+  - Ready in about 4 s, with a recording per-word identical to the dev t4 baseline.
+  - A plain build is unchanged (1 thread, identical to t1).
+- **A2 depends on the thread count.**
+  - Unlike B2, A2's per-word results differ between t1 and t4: 2.aac on the maintainer set, and one trust file in 3 places.
+  - Each thread count is stable over 3 runs.
+  - The earlier phone run `20261010-163757_A2_80ms` matches t4 here, not t1. Not investigated.
+
+### Ayah-end gate (`scripts/ayah-end-gate.ts`, offline, on M1 logs; M2 gives byte-identical output)
+
+The rules:
+- R1 = voicing: stopped is either quiet below a running noise floor + D dB, or low clarity.
+- R2 = CTC blank probability.
+- R3 = both.
+
+Gate-caused early means the gate fires before tilawa's own confirm (R0) **and** before the labelled end. R0 alone is already before the labelled end in 7 maintainer cases (baseline early), which are not charged to the gate. Default parameters: H 0.7, N 480 ms, U 240 ms, D 8 dB, C 0.5, R2 window 320 ms, B 0.95, P 0.2.
+
+| Set | Rule | Ayah-end p50 / p95 / max (ms) | Gate-caused early (worst) | Verdict mismatches | Closest call |
+|---|---|---|---|---|---|
+| maintainer | R0 (tilawa) | 427 / 1878 / 5838 | — | — | — |
+| maintainer | R1 | 373 / 1837 / 5838 | 0 | 1 (5.ogg 1:7 w9 shown `unsure`, last verdict `ok`) | +114 |
+| maintainer | R2 | 328 / 927 / 987 | **4 (−494)** | 5 | −494 |
+| maintainer | R3 | 414 / 1837 / 5838 | 0 | 1 | +114 |
+| trust | R1 | −12 / 1473 / 1762 | 3 (−1375) | 2 | −1375 |
+| trust | R2 | −75 / 886 / 1095 | 11 (−1375) | 7 | −1375 |
+
+- **R2 fails everywhere.** No parameter row of 128 passes on either set. On 1:7 w9 it fires during the held vowel in 3 of 5 maintainer files. This matches the research: CTC is "peaky", so blank dominates during a held madd.
+- **R1/R3: rows exist with 0 early and 0 mismatches on the maintainer set** (216 of 432 R1 rows), but the best of them leave ayah-end p95 at 1878 ms (p50 414). The same rows give 1-4 gate-caused early cases on the trust set.
+- **Verdict:** none of these gates as designed delivers a safe gain. Why R1 helps so little (the eligibility condition, the "no new characters for N ms" condition, or the voicing test) is not diagnosed yet.
+- **Limits:** 5 maintainer files with no deliberately long madd. The trust ayah-end labels sit after the breath, which inflates the trust early counts. The sweep overfits.
+
+### Not run yet
+- **Phone (Redmi Note 8):** every speed verdict above is desktop only. The phone kit (exact URLs and baselines `20261010-175959` / `-180617`) is in the plan's Task 10.
+- **Phase B** (gated Quran-Lab files): real fp32, chunk 24 with the same weights, left context 128/64, and v3.1. It waits for the download.
+
+### Recommendation (pending the maintainer's decision; no default was changed)
+1. **S1:**
+   - Fix the production thread hang with ORT's own `.mjs`/`.wasm` (already behind the flag).
+   - Lift the production 1-thread rule only after the phone runs (P2 on both sets) pass the guards.
+2. **Drop S2 (fp32)** on this evidence. If anything, check it once on the phone, since the phone lacks the dot-product instructions; the desktop says slower and 3.6× bigger.
+3. **Do not switch to a0w (A1).** It is faster per second of audio, but it loses tracking on the maintainer set and depends on the thread count. Phase B's chunk-24 test with B2's own weights is the cleaner way to get its speed.
+4. **Ayah-end:**
+   - Keep `settleFrames` 25 and do not wire any gate.
+   - Next step: find which condition holds R1 back, using the same logs. Also record a few readings with deliberately long madd before any further tuning.
+
 ## Decision criteria
 
 As planned before the run. Latency was later redefined as confirm latency (see the decision below).
