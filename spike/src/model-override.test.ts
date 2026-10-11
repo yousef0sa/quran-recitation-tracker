@@ -42,7 +42,7 @@ describe("parseIoName", () => {
   });
 
   it("rejects path tricks and the wrong extension", () => {
-    for (const bad of ["../x.io.json", ".x.io.json", "a..b.io.json", "x.io.json.exe", "a/b.io.json", "a\b.io.json", "models/a.io.json", "a b.io.json", "x.IO.json", "x.json", "x.onnx", "xio.json", ".io.json", "x.io.JSON"]) {
+    for (const bad of ["../x.io.json", ".x.io.json", "a..b.io.json", "x.io.json.exe", "a/b.io.json", "a\\b.io.json", "models/a.io.json", "a b.io.json", "x.IO.json", "x.json", "x.onnx", "xio.json", ".io.json", "x.io.JSON"]) {
       expect(parseIoName(bad)).toBeNull();
     }
   });
