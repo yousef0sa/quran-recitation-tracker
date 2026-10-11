@@ -6,7 +6,8 @@ spike/recordings/
 spike/results/
 
 # Claude Code files (local only)
-.claude/
+.claude/*
+!.claude/hooks/
 
 # Safety net: never commit secrets, models, audio or local junk
 .env

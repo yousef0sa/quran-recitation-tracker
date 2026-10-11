@@ -1,0 +1,33 @@
+{
+  "devGlobs": [
+    "**/*.test.*",
+    "**/*.spec.*",
+    "**/__tests__/**",
+    "**/*.md",
+    ".claude/**",
+    "**/scripts/**",
+    "docs/**"
+  ],
+  "uiGlobs": [
+    "spike/src/**",
+    "spike/public/**",
+    "spike/*.html",
+    "src/**",
+    "public/**",
+    "app/**",
+    "web/**",
+    "mobile/**",
+    "**/*.html",
+    "**/*.css",
+    "**/*.tsx",
+    "**/*.jsx",
+    "**/*.vue",
+    "**/*.svelte",
+    "**/res/values*/*.xml",
+    "**/*.strings",
+    "**/*.arb"
+  ],
+  "sources": [
+    { "path": "spike/public/data/zipformer_quran.json", "adapter": "tilawa-corpus-v2" }
+  ]
+}

@@ -53,6 +53,11 @@ jobs:
 
       - run: npm test
 
+      # quran-guard hook and the bug finder scripts (need the corpus, fetched above).
+      - name: Guard and bug finder tests
+        working-directory: .
+        run: node --test ".github/bug-finder/*.test.mjs" .claude/hooks/quran-guard.test.mjs
+
       - run: npx @e2e-dev/web install chromium --with-deps
 
       - run: npm run test:e2e
