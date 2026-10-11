@@ -37,29 +37,21 @@ describe("defaultThreads", () => {
     expect(defaultThreads("")).toBe(1);
   });
 
-  it("requestThreads honours ?threads= and the device default on the dev server", () => {
-    expect(requestThreads(null, android, true)).toBe(4);
-    expect(requestThreads("2", desktop, true)).toBe(2);
-    expect(requestThreads("3", desktop, true)).toBe(1);
+  it("requestThreads uses the device default: 4 on a phone, 1 on desktop", () => {
+    expect(requestThreads(null, android)).toBe(4);
+    expect(requestThreads(null, desktop)).toBe(1);
   });
 
-  it("requestThreads stays on 1 in a production build, even with ?threads=, where more threads hang at load", () => {
-    expect(requestThreads(null, android, false)).toBe(1);
-    expect(requestThreads("4", android, false)).toBe(1);
-    expect(requestThreads("2", desktop, false)).toBe(1);
+  it("requestThreads honours ?threads=1|2|4 on any device", () => {
+    expect(requestThreads("2", desktop)).toBe(2);
+    expect(requestThreads("4", desktop)).toBe(4);
+    expect(requestThreads("1", android)).toBe(1);
   });
 
-  it("requestThreads with the production experiment flag behaves like the dev server", () => {
-    expect(requestThreads(null, android, false, true)).toBe(4);
-    expect(requestThreads("4", desktop, false, true)).toBe(4);
-    expect(requestThreads("2", desktop, false, true)).toBe(2);
-    expect(requestThreads("3", desktop, false, true)).toBe(1);
-    expect(requestThreads(null, desktop, false, true)).toBe(1);
-  });
-
-  it("requestThreads has the production experiment flag off by default", () => {
-    expect(requestThreads("4", desktop, false)).toBe(1);
-    expect(requestThreads("4", desktop, false, false)).toBe(1);
+  it("requestThreads falls back to the device default for an invalid ?threads=", () => {
+    expect(requestThreads("3", desktop)).toBe(1);
+    expect(requestThreads("3", android)).toBe(4);
+    expect(requestThreads("", android)).toBe(4);
   });
 
   it("is the fallback of parseThreads", () => {
