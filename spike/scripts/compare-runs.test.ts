@@ -1,7 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, describe, expect, it } from "vitest";
 import {
   compareRuns,
   everWrongOrSkipped,
+  fileProblems,
   finalStates,
   formatComparison,
   wordLabel,
@@ -174,5 +179,85 @@ describe("compareRuns", () => {
     expect(wordLabel(0)).toBe("1:1 w1");
     expect(wordLabel(17)).toBe("1:6 w1");
     expect(wordLabel(28)).toBe("1:7 w9");
+  });
+});
+
+describe("input checks (fileProblems)", () => {
+  const good = run({ "1.aac": {}, "2.aac": {} });
+
+  it("accepts well-formed results and logs", () => {
+    expect(fileProblems("results", good.results)).toEqual([]);
+    expect(fileProblems("logs", good.logs)).toEqual([]);
+  });
+
+  it("reports a missing files array, perWord, issues and log.entries", () => {
+    expect(fileProblems("results", { x: 1 })).toEqual(['no "files" array']);
+    expect(fileProblems("logs", null)).toEqual(['no "files" array']);
+    expect(fileProblems("results", { files: [{ recording: "1.aac", metrics: {}, issues: [] }] })).toEqual(['1.aac: no "metrics.perWord" array']);
+    expect(fileProblems("results", { files: [{ recording: "1.aac", metrics: { perWord: [] } }] })).toEqual(['1.aac: no "issues" array']);
+    expect(fileProblems("logs", { files: [{ recording: "1.aac", log: {} }] })).toEqual(['1.aac: no "log.entries" array']);
+    expect(fileProblems("logs", { files: [{ log: { entries: [] } }] })).toEqual(['files[0] has no "recording" name']);
+  });
+
+  it("lists each duplicate recording name once, in results and in logs", () => {
+    const twice = run({ "1.aac": {}, "2.aac": {} });
+    const results = { files: [...twice.results.files, ...twice.results.files, twice.results.files[0]] };
+    const logs = { files: [...twice.logs.files, twice.logs.files[1]] };
+    expect(fileProblems("results", results)).toEqual(["duplicate recording name(s): 1.aac, 2.aac"]);
+    expect(fileProblems("logs", logs)).toEqual(["duplicate recording name(s): 2.aac"]);
+  });
+});
+
+describe("command line: bad input exits 2, a difference exits 1", () => {
+  const dir = mkdtempSync(join(tmpdir(), "compare-runs-"));
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+  const script = join(__dirname, "compare-runs.ts");
+
+  function write(name: string, json: unknown): string {
+    const path = join(dir, name);
+    writeFileSync(path, typeof json === "string" ? json : JSON.stringify(json));
+    return path;
+  }
+  function cli(...paths: string[]) {
+    const r = spawnSync(process.execPath, [script, ...paths], { encoding: "utf8" });
+    return { code: r.status, out: r.stdout, err: r.stderr };
+  }
+
+  const a = run({ "1.aac": {}, "2.aac": {} });
+  const base = [write("a_results.json", a.results), write("a_logs.json", a.logs)] as const;
+
+  it("exits 0 for identical runs and 1 for a difference", () => {
+    const same = [write("s_results.json", a.results), write("s_logs.json", a.logs)];
+    expect(cli(...base, ...same).code).toBe(0);
+    const b = run({ "1.aac": { restarts: 1 }, "2.aac": {} });
+    expect(cli(...base, write("d_results.json", b.results), write("d_logs.json", b.logs)).code).toBe(1);
+  });
+
+  // The bad file takes the place of run B's results (slot 2) or logs (slot 3).
+  it.each([
+    ["no files array", 2, { x: 1 }, 'no "files" array'],
+    ["no perWord", 2, { files: [{ recording: "1.aac", metrics: {}, issues: [] }] }, 'no "metrics.perWord" array'],
+    ["no issues", 2, { files: [{ recording: "1.aac", metrics: { perWord: [] } }] }, 'no "issues" array'],
+    ["no log.entries", 3, { files: [{ recording: "1.aac", log: {} }] }, 'no "log.entries" array'],
+    ["not JSON", 3, "{not json", "cannot read as JSON"],
+  ])("exits 2 with a message, no stack trace: %s", (_label, slot, json, message) => {
+    const paths: string[] = [...base, write("ok_results.json", a.results), write("ok_logs.json", a.logs)];
+    paths[slot] = write("bad.json", json);
+    const r = cli(...paths);
+    expect(r.code).toBe(2);
+    expect(r.err).toContain(message);
+    expect(r.err).not.toContain("TypeError");
+  });
+
+  it("exits 2 and names the recording when a results or logs file repeats one", () => {
+    const dupResults = { files: [...a.results.files, { ...(a.results.files[0] as object), metrics: { ...(a.results.files[0] as { metrics: object }).metrics, restarts: 99 } }] };
+    const dupLogs = { files: [...a.logs.files, { recording: "2.aac", log: { entries: [] } }] };
+    const rr = cli(...base, write("dup_results.json", dupResults), base[1]);
+    expect(rr.code).toBe(2);
+    expect(rr.err).toContain("duplicate recording name(s): 1.aac");
+    const rl = cli(...base, base[0], write("dup_logs.json", dupLogs));
+    expect(rl.code).toBe(2);
+    expect(rl.err).toContain("duplicate recording name(s): 2.aac");
+    expect(rl.out).toBe("");
   });
 });

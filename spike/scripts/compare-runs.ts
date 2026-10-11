@@ -6,7 +6,7 @@
 // its last non-pending state in any list; else "n/a" (reported as a change, never counted as a state flip).
 // --allow-state-flips N permits up to N ok<->unsure final-state changes over all files (the float effect); default 0.
 // Prints positions ("1:6 w1" = ayah 6, word 1) and numbers only, never transcript or verse text. Exit code 1 on any
-// difference that is not an allowed flip, 2 on bad usage or no common file.
+// difference that is not an allowed flip, 2 on bad usage, a malformed or duplicate-recording input file, or no common file.
 // Node runs this file by stripping types: erasable syntax only, and only `node:` imports.
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
@@ -209,8 +209,55 @@ export function formatComparison(c: Comparison, allowStateFlips = 0): string {
   return lines.join("\n");
 }
 
-function readJson<T>(path: string): T {
-  return JSON.parse(readFileSync(path, "utf8")) as T;
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Names that occur more than once, each listed once, in first-seen order. */
+function duplicates(names: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const dup = new Set<string>();
+  for (const name of names) (seen.has(name) ? dup : seen).add(name);
+  return [...dup];
+}
+
+/** Why a parsed results/logs file cannot be compared (wrong shape, duplicate recording names); empty when it can. */
+export function fileProblems(kind: "results" | "logs", json: unknown): string[] {
+  const files = isObject(json) ? json.files : undefined;
+  if (!Array.isArray(files)) return ['no "files" array'];
+  const problems: string[] = [];
+  const names: string[] = [];
+  files.forEach((f: unknown, i) => {
+    const name = isObject(f) && typeof f.recording === "string" ? f.recording : null;
+    if (name === null) return void problems.push(`files[${i}] has no "recording" name`);
+    names.push(name);
+    if (!isObject(f)) return;
+    if (kind === "results") {
+      const perWord = isObject(f.metrics) ? f.metrics.perWord : undefined;
+      if (!Array.isArray(perWord) || !perWord.every(isObject)) problems.push(`${name}: no "metrics.perWord" array`);
+      if (!Array.isArray(f.issues)) problems.push(`${name}: no "issues" array`);
+    } else {
+      const entries = isObject(f.log) ? f.log.entries : undefined;
+      if (!Array.isArray(entries) || !entries.every(isObject)) problems.push(`${name}: no "log.entries" array`);
+    }
+  });
+  const dup = duplicates(names);
+  if (dup.length > 0) problems.push(`duplicate recording name(s): ${dup.join(", ")}`);
+  return problems;
+}
+
+/** Reads and checks one input file; prints each problem and returns null when it cannot be compared. */
+function readInput<T>(kind: "results" | "logs", path: string): T | null {
+  let json: unknown;
+  try {
+    json = JSON.parse(readFileSync(path, "utf8"));
+  } catch (err) {
+    console.error(`${path}: cannot read as JSON (${err instanceof Error ? err.message : String(err)})`);
+    return null;
+  }
+  const problems = fileProblems(kind, json);
+  for (const problem of problems) console.error(`${path}: ${problem}`);
+  return problems.length === 0 ? (json as T) : null;
 }
 
 function main(argv: string[]): void {
@@ -236,8 +283,19 @@ function main(argv: string[]): void {
     process.exitCode = 2;
     return;
   }
-  const a: Run = { results: readJson<ResultsJson>(aResults), logs: readJson<LogsJson>(aLogs) };
-  const b: Run = { results: readJson<ResultsJson>(bResults), logs: readJson<LogsJson>(bLogs) };
+  const inputs = [
+    readInput<ResultsJson>("results", aResults),
+    readInput<LogsJson>("logs", aLogs),
+    readInput<ResultsJson>("results", bResults),
+    readInput<LogsJson>("logs", bLogs),
+  ];
+  if (inputs.includes(null)) {
+    process.exitCode = 2;
+    return;
+  }
+  const [ar, al, br, bl] = inputs as [ResultsJson, LogsJson, ResultsJson, LogsJson];
+  const a: Run = { results: ar, logs: al };
+  const b: Run = { results: br, logs: bl };
   const comparison = compareRuns(a, b, allow);
   console.log(formatComparison(comparison, allow));
   if (comparison.compared.length === 0) process.exitCode = 2;
