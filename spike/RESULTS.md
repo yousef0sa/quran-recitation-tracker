@@ -97,7 +97,7 @@ Single-thread phone runs before the headers (`20261010-150805_B2_80ms`, `2026101
 
 **Verdict against the criteria:** phone B2 @ 80 ms with 4 threads is between NO-GO (> 0.8) and GO (≤ 0.3); tracking and confirm latency are unchanged.
 
-**Maintainer's decision (2026-10-10):** tried live on the phone with 4 threads: «يلحق، بسرعة لا بأس بها». 4 threads is the default on phones (by user agent: Android, iPhone, `Mobile`), provisional and to be revisited; desktop stays at 1. `?threads=` still overrides it. Before any hosted build, the production-build hang below must be fixed, or phones would not load. If 0.68 is not enough headroom (UI and mic also need the CPU, and heat builds up), the next levers are: 8 threads, an onnxruntime-web upgrade, A2 with threads (0.98 single-thread), a smaller model.
+**Maintainer's decision (2026-10-10):** tried live on the phone with 4 threads: «يلحق، بسرعة لا بأس بها». 4 threads is the default on phones (by user agent: Android, iPhone, `Mobile`), provisional and to be revisited; desktop stays at 1. `?threads=` still overrides it. Before any hosted build, the production-build hang below must be fixed, or phones would not load. (Fixed in follow-up 6, 2026-10-11: production builds now run 4 threads on phones.) If 0.68 is not enough headroom (UI and mic also need the CPU, and heat builds up), the next levers are: 8 threads, an onnxruntime-web upgrade, A2 with threads (0.98 single-thread), a smaller model.
 
 ## Follow-up 3: verdicts and settleFrames (2026-10-10)
 
@@ -162,7 +162,7 @@ Setup: B2 @ 80 ms, headless Chromium 153.0.8010.12, WASM single-thread, `@tilawa
 ## Follow-up 6: speed and accuracy experiments (2026-10-11)
 
 > المتابعة 6: اختبرنا أفكار البحث قبل اعتماد أي شيء.
-> - 4 خيوط تسرّع الكمبيوتر 1.6× بنفس النتائج تمامًا، وصارت تعمل في نسخة الإنتاج خلف مفتاح تجريبي.
+> - 4 خيوط تسرّع الكمبيوتر 1.6× بنفس النتائج تمامًا، وصارت تعمل في نسخة الإنتاج، وهي الآن الافتراضي على الجوال (قرار 2026-10-11).
 > - fp32 أبطأ من int8، فرفضناه.
 > - نموذج a0w أسرع بنحو 25% لكنه أقل دقة على تسجيلاتك، فرفضناه.
 > - بوابة «صمت أم مد» لنهاية الآية آمنة على تسجيلاتك، لكن فائدتها شبه معدومة، وفيها حالات مبكرة على مجموعة الثقة. وبوابة احتمال الفراغ (CTC) تؤكد أثناء المد، فرفضناها.
@@ -177,7 +177,7 @@ Setup: B2 @ 80 ms, headless Chromium 153.0.8010.12, WASM single-thread, `@tilawa
 >   - fp32 لا يتسع له الجوال.
 >   - ما زال RTF على الجوال فوق الهدف (0.55 مع v3).
 >
-> لم يتغيّر أي إعداد افتراضي.
+> تغيّر إعداد واحد فقط: 4 خيوط على الجوال في نسخة الإنتاج (والكمبيوتر خيط واحد)، وحُذف المفتاح التجريبي. ولم يتغيّر أي إعداد آخر.
 
 Plan: `.claude/PRPs/plans/speed-accuracy-experiments.plan.md`. Research: `.claude/PRPs/research/research-speed-accuracy.md`. Setup: headless Chromium 153.0.8010.12, Windows desktop with 8 cores, ORT WASM (onnxruntime-web 1.24.2), `@tilawa/core` 0.4.0, chunk 80 ms, dev server on loopback. Raw data: `spike/results/20261011-*` (git-ignored).
 
@@ -209,7 +209,8 @@ ORT's CPU optimizer already fuses the quantized MatMuls (242 `DynamicQuantizeMat
 | A1 | A2 (a0w, 480 ms step), t1 (M6) | 50.6-53.8 | 110-114 | 0.120-0.125 | maintainer **137/145, 11 ever wrong/skipped, 1 issue**; trust 232/232, 0, interior p95 935 vs 1064 | **faster by ms/audio s, fails accuracy** |
 | A1 | A2, t4 (M7) | 29.1-32.2 | 65-71 | 0.074-0.079 | maintainer **142/145, 6 ever wrong/skipped**; trust 232/232, 0, interior p95 927 | **faster, fails accuracy** |
 
-- **Prod threads (S1).** The flagged build runs 4 threads with 3 pthread workers and `crossOriginIsolated`: `VITE_EXPERIMENT_PROD_THREADS=1 npm run build`, preview on loopback, ORT's own `.mjs`/`.wasm` via `wasmPaths`.
+- **Prod threads (S1).** The flag below was the setup during the experiment. It was removed when S1 was adopted (`12fb9b7`): every production build now loads ORT's own files, with 4 threads on phones.
+  - The flagged build ran 4 threads with 3 pthread workers and `crossOriginIsolated`: `VITE_EXPERIMENT_PROD_THREADS=1 npm run build`, preview on loopback, ORT's own `.mjs`/`.wasm` via `wasmPaths`.
   - Ready in about 4 s, with a recording per-word identical to the dev t4 baseline.
   - A plain build is unchanged (1 thread, identical to t1).
 - **A2 depends on the thread count.**
@@ -316,7 +317,7 @@ Controls:
 - Per-step model time is longer for V3: p50 230-252 ms against 193-195 ms (feed > 5 ms: 238-255 against 199-202), because each step is 480 ms. It is reported, not judged.
 - RTF is still far above the 0.3 target on this phone, for every config.
 - Per-word, phone V3 at t4 matches desktop V3 at **t1**, not desktop t4 (the difference is 4.aac 1:5 w4). So this case depends on the device's numerics, not only on the thread count.
-- **Flagged production build on the phone** (`VITE_EXPERIMENT_PROD_THREADS=1`, `index.html?threads=4`, checked over remote debugging, no microphone):
+- **Flagged production build on the phone** (`VITE_EXPERIMENT_PROD_THREADS=1`, a flag since removed when S1 was adopted; `index.html?threads=4`, checked over remote debugging, no microphone):
   - The model loads in 12.7 s.
   - The stats line shows `WASM 4 threads`, `crossOriginIsolated` is true, and there are 4 workers.
   - No hang within 60 s.
@@ -328,9 +329,9 @@ Controls:
 ### Not run yet
 - PV3F at t1 or with other Chrome tabs closed, which might fit in memory. Desktop says fp32 is slower anyway.
 
-### Recommendation (pending the maintainer's decision; no default was changed)
-1. **S1:**
-   - Fix the production thread hang with ORT's own `.mjs`/`.wasm` (already behind the flag).
+### Recommendation and decisions (2026-10-11)
+1. **S1 (adopted; the only default that changed):**
+   - Fix the production thread hang with ORT's own `.mjs`/`.wasm` (done; now the default, the flag is removed).
    - The phone runs now pass: P2 on both sets, and the flagged build runs 4 threads on the phone.
    - **Maintainer's decision (2026-10-11): adopted.** The production build now uses 4 threads on phones and 1 on desktop, and `?threads=` works there too. The flag is removed, and ORT's own threaded files load in every production build. The maintainer tried the production live page on the phone, and it works.
 2. **Drop S2 (fp32).** The dequantized B2 and the official v3 fp32 are both slower on the desktop, with no accuracy gain, and the fp32 file does not even load on the phone.
