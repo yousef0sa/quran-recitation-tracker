@@ -49,12 +49,21 @@ test("sanitize: no raw HTML survives, so the footer cannot be hidden or the mark
     assert.equal(markerOf(r.body), r.fp);
     assert.match(r.body, /may be wrong/);
   }
-  const out = sanitize("hi @someone, mail a@b.c, see other/repo#12, https://github.com/o/r/issues/5 and `@kept` &#64;x");
-  assert.match(out, /`@someone`/);
-  assert.match(out, /a@b\.c/);
-  assert.match(out, /`other\/repo#12`/);
-  assert.match(out, /`https:\/\/github\.com\/o\/r\/issues\/5`/);
+  const out = sanitize("hi @someone, mail a@b.c, see other/repo#12, https://github.com/o/r/issues/5 &#64;x");
+  assert.ok(!/@[A-Za-z0-9]/.test(out.replace("a@b.c", "")), "no live @mention");
+  assert.match(out, /a@b\.c/, "emails untouched");
+  assert.ok(!/[\w.-]+\/[\w.-]+#\d/.test(out), "no live owner/repo#N");
+  assert.ok(!/github\.com\/[\w.-]+\/[\w.-]+\/issues\/\d/.test(out), "no live issue URL");
   assert.match(out, /&amp;#64;x/, "character references are shown, not rendered");
+});
+
+test("sanitize: mentions stay dead inside and around code spans, and code spans are not broken", () => {
+  // Inputs from the PR review, plus mismatched backtick runs that defeated backtick-wrapping.
+  for (const input of ["`foo(@bar)`", "call `x(@a, @b)` then @c", "``x` @evil", "`a`` @evil", "see `fn(@x)` and other/repo#3", "`@a`@b``@c"]) {
+    const out = sanitize(input);
+    assert.ok(!/@[A-Za-z0-9]/.test(out), `no live @mention anywhere in ${JSON.stringify(out)}`);
+    assert.equal(out.split("`").length, input.split("`").length, `backticks unchanged for ${JSON.stringify(input)}`);
+  }
 });
 
 test("sanitize: no fenced blocks or images can render, and an unclosed fence cannot swallow the footer", () => {

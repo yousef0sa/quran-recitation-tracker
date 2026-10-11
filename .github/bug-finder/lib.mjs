@@ -64,17 +64,20 @@ export function validateDraft({ meta, body }, ctx) {
  *   their own escapes into characters, and an unclosed fence would swallow the footer;
  * - no images (`![` escaped): a picture can show text the guard never saw;
  * - no @-pings, and no owner/repo#N or issue/PR URLs, which add "mentioned this" events elsewhere.
+ *   These are broken with an invisible WORD JOINER (U+2060) rather than wrapped in backticks:
+ *   added backticks can pair with backticks already in the text and expose the mention.
  * Inline code stays, but `&` and `<` inside it show escaped: an accepted cost.
  */
+const WJ = "\u2060";
 export function sanitize(text) {
   return text
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/^([ \t>]*)(`{3,}|~{3,})/gm, "$1\\$2")
     .replace(/!\[/g, "!\\[")
-    .replace(/(^|[^\w`])@([A-Za-z0-9][A-Za-z0-9-]*)/g, "$1`@$2`")
-    .replace(/(^|[^\w`/])([\w.-]+\/[\w.-]+#\d+)/g, "$1`$2`")
-    .replace(/(^|[^`])(https?:\/\/github\.com\/[\w.-]+\/[\w.-]+\/(?:issues|pull)\/\d+\S*)/g, "$1`$2`");
+    .replace(/(^|[^\w])@(?=[A-Za-z0-9])/g, `$1@${WJ}`)
+    .replace(/([\w.-]+\/[\w.-]+)#(?=\d)/g, `$1#${WJ}`)
+    .replace(/(https?:\/\/github)\.(com\/[\w.-]+\/[\w.-]+\/(?:issues|pull)\/\d)/g, `$1${WJ}.$2`);
 }
 
 export function footer(fp) {
