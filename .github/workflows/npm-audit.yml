@@ -1,0 +1,72 @@
+# Weekly npm audit: one GitHub issue per high/critical advisory (GHSA id), labelled `auto-found`.
+# No Claude. Separate from bug-finder.yml so a registry hiccup here never holds back its review window.
+# Shares .github/bug-finder/report.mjs (guard, dedupe, footer).
+
+name: npm audit
+
+on:
+  # schedule:
+  #   - cron: "0 3 * * 6" # Saturday 03:00 UTC (06:00 Riyadh). Enable together with bug-finder.yml.
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run: show what would be posted in the run summary, open no issues"
+        type: boolean
+        default: true
+
+permissions: {}
+
+concurrency:
+  group: npm-audit
+  cancel-in-progress: false
+
+env:
+  DRY: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+  DO_NOT_TRACK: "1"
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: 24
+
+      # Reads the lockfile only (no install). Exit code is ignored: audit.mjs reads the JSON and
+      # treats an npm error as a failure, not as zero advisories.
+      - name: npm audit
+        working-directory: spike
+        run: npm audit --json --audit-level=high > "$RUNNER_TEMP/audit.json" || true
+
+      - name: Restore model and corpus
+        uses: actions/cache/restore@v6.1.0
+        with:
+          path: |
+            spike/public/models
+            spike/public/data
+          key: assets-${{ hashFiles('spike/scripts/assets.json') }}
+
+      - name: Fetch model and corpus (SHA-256 checked)
+        run: node spike/scripts/fetch-assets.mjs
+
+      - name: Report
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ARGS=(--audit "$RUNNER_TEMP/audit.json")
+          if [ "$DRY" = true ]; then
+            rc=0; node .github/bug-finder/report.mjs "${ARGS[@]}" --dry > "$RUNNER_TEMP/dry.md" || rc=$?
+            { echo "## npm audit (dry run)"; echo; cat "$RUNNER_TEMP/dry.md"; } >> "$GITHUB_STEP_SUMMARY"
+            exit $rc
+          else
+            node .github/bug-finder/report.mjs "${ARGS[@]}"
+          fi

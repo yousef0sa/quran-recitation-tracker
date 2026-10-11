@@ -1,0 +1,361 @@
+# Weekly bug finder: reviews the commits pushed since the last run against CLAUDE.md. Opens GitHub
+# issues labelled `auto-found`; close a wrong one with `false-positive`. npm audit: npm-audit.yml.
+#
+#   gate     (no Claude)  new commits since the last successful scheduled run?
+#   find     (Claude)     finder session -> candidates; fresh verifier session -> at most 3 drafts.
+#                         Read/Grep/Glob only, no Bash, no network tools, no GitHub write token,
+#                         user settings only (no project settings, hooks or MCP servers).
+#                         Drafts are guarded (Quran text, any Arabic, secrets; checked as rendered,
+#                         fail-closed) before upload.
+#   publish  (no Claude)  clean checkout, guard again, check each draft against git, dedupe, open issues
+#
+# What Claude can still do: read the repository, and write up to 3 drafts that, if they pass the
+# guard and the git checks, become public issues. The subscription token is in the Claude process
+# env; the guard blocks it (and the job token) verbatim, not encoded. If it ever leaks, revoke it.
+# Never re-run this workflow with debug logging: it prints the full Claude transcript to public logs.
+# Scripts and prompts: .github/bug-finder/. Plan: .claude/PRPs/plans/bug-finder.plan.md (local only).
+
+name: Bug finder
+
+on:
+  # schedule:
+  #   - cron: "0 3 * * 6" # Saturday 03:00 UTC (06:00 Riyadh). Enable after the dry runs pass.
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run: show what would be posted in the run summary, open no issues"
+        type: boolean
+        default: true
+      base_sha:
+        description: "Optional: review commits after this SHA (default: since the last successful scheduled run)"
+        type: string
+        default: ""
+
+permissions: {}
+
+concurrency:
+  group: bug-finder
+  cancel-in-progress: false
+
+env:
+  DRY: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+  DO_NOT_TRACK: "1"
+  E2E_TELEMETRY_DISABLED: "1"
+  CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      base_sha: ${{ steps.base.outputs.base_sha }}
+      head_sha: ${{ steps.base.outputs.head_sha }}
+      new_commits: ${{ steps.base.outputs.new_commits }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # BASE = the base_sha input if given, else the head of the last *successful* scheduled run on
+      # main (failed runs, dry runs and branch runs never move it), else 7 days ago. Empty BASE means
+      # all history (a repo younger than 7 days), root commit included.
+      - id: base
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_BASE: ${{ inputs.base_sha }}
+        run: |
+          set -euo pipefail
+          BASE="${INPUT_BASE:-}"
+          if [ -n "$BASE" ]; then
+            git merge-base --is-ancestor "$BASE" HEAD || { echo "::error::base_sha $BASE is not an ancestor of HEAD"; exit 1; }
+          else
+            BASE=$(gh run list --workflow bug-finder.yml --branch main --event schedule --status success \
+              --limit 1 --json headSha --jq '.[0].headSha // empty' 2>/dev/null) \
+              || { echo "::warning::could not read previous runs; reviewing the last 7 days"; BASE=""; }
+            if [ -z "$BASE" ] || ! git merge-base --is-ancestor "$BASE" HEAD 2>/dev/null; then
+              BASE=$(git rev-list -1 --before='7 days ago' HEAD)
+            fi
+          fi
+          if [ -n "$BASE" ]; then
+            BASE=$(git rev-parse --verify "$BASE^{commit}")
+            NEW=$(git rev-list --count "$BASE"..HEAD -- . ':!.claude')
+          else
+            NEW=$(git rev-list --count HEAD -- . ':!.claude')
+          fi
+          echo "BASE=${BASE:-<all history>} HEAD=$(git rev-parse HEAD) new code commits: $NEW"
+          {
+            echo "base_sha=$BASE"
+            echo "head_sha=$(git rev-parse HEAD)"
+            echo "new_commits=$NEW"
+          } >> "$GITHUB_OUTPUT"
+
+  find:
+    needs: gate
+    if: needs.gate.outputs.new_commits != '0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # Read the code, nothing else: the action gets this read-only token, never a write one.
+    # Never add id-token: write (without github_token the action would mint an App token that can write).
+    permissions:
+      contents: read
+    outputs:
+      raw_count: ${{ steps.count.outputs.raw_count }}
+    env:
+      BASE: ${{ needs.gate.outputs.base_sha }}
+      HEAD_SHA: ${{ needs.gate.outputs.head_sha }}
+      # No Bash, no network tools, no notebooks or subagents; no reads of /proc, .git, deps, or the
+      # model and corpus folders (absent anyway until Claude is done).
+      CLAUDE_SETTINGS: >-
+        {"permissions":{"blockReadsOutsideWorkingDirectories":true,"deny":["Bash","WebFetch","WebSearch",
+        "NotebookEdit","Task","Agent","Read(//proc/**)","Read(./.git)","Read(./.git/**)","Read(./spike/public/models/**)",
+        "Read(./spike/public/data/**)","Read(./node_modules/**)","Read(./spike/node_modules/**)"]}}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ needs.gate.outputs.head_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: 24
+
+      # Debug logging makes the action print the whole Claude transcript to the public log.
+      - name: Refuse debug runs
+        if: runner.debug == '1'
+        run: |
+          echo "::error::re-run without debug logging: it would print the Claude transcript publicly"; exit 1
+
+      # The action loads project MCP servers and settings into the session that holds the token.
+      # Claude also runs with --setting-sources user --strict-mcp-config; this refuses such files outright.
+      - name: No project MCP servers or Claude settings
+        run: |
+          for f in .mcp.json .claude/settings.json .claude/settings.local.json; do
+            if [ -e "$f" ]; then echo "::error::$f present in the checkout"; exit 1; fi
+          done
+
+      - name: Prepare inputs
+        run: |
+          set -euo pipefail
+          mkdir -p bug-finder/input
+          if [ -n "$BASE" ]; then RANGE="$BASE..$HEAD_SHA"; FROM="$BASE"; else RANGE="$HEAD_SHA"; FROM=4b825dc642cb6eb9a060e54bf8d69288fbee4904; fi
+          # Full log to a file first: piping straight into head would SIGPIPE git under pipefail.
+          # Lockfiles are left out of the patch (npm audit covers them); they are still in files.txt.
+          git log -p --no-color "$RANGE" -- . ':!.claude' ':!**/package-lock.json' > "$RUNNER_TEMP/full.patch"
+          head -c 300000 "$RUNNER_TEMP/full.patch" > bug-finder/input/commits.patch
+          if [ "$(wc -c < "$RUNNER_TEMP/full.patch")" -gt 300000 ]; then
+            printf '\n[bug-finder: patch truncated at 300000 bytes; read the changed files directly]\n' >> bug-finder/input/commits.patch
+          fi
+          git log --format='%h %s' "$RANGE" -- . ':!.claude' > bug-finder/input/commits.txt
+          git diff --name-only "$FROM" "$HEAD_SHA" -- . ':!.claude' > bug-finder/input/files.txt
+          echo "patch: $(wc -c < "$RUNNER_TEMP/full.patch") bytes, $(wc -l < bug-finder/input/commits.txt) commits, $(wc -l < bug-finder/input/files.txt) files"
+
+      - id: finder
+        uses: anthropics/claude-code-action@9171db3e57d6a3140a37ddc2ba92788584e0ead6 # v1.0.234
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ github.token }}
+          display_report: "false"
+          show_full_output: "false"
+          settings: ${{ env.CLAUDE_SETTINGS }}
+          prompt: |
+            Read `.github/bug-finder/find.md` and follow it exactly.
+            The new commits are listed in `bug-finder/input/commits.txt` (up to ${{ env.HEAD_SHA }}).
+          claude_args: |
+            --model claude-fable-5-1
+            --max-turns 60
+            --setting-sources user
+            --strict-mcp-config
+            --allowedTools "Read,Grep,Glob,Edit(./bug-finder/candidates.json)"
+
+      # Numbers only, then remove the finder's transcript so the verifier cannot read its reasoning.
+      - id: finder_cost
+        if: always() && steps.finder.outputs.execution_file != ''
+        env:
+          EXECUTION_FILE: ${{ steps.finder.outputs.execution_file }}
+        run: |
+          node .github/bug-finder/cost.mjs "$EXECUTION_FILE" >> "$GITHUB_OUTPUT"
+          rm -f "$EXECUTION_FILE"
+          rm -rf ~/.claude/projects
+
+      - id: isolate
+        run: |
+          set -euo pipefail
+          # The action writes the job token into the origin URL; take it out again.
+          git remote set-url origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          # Claude may only have written bug-finder/candidates.json.
+          if git status --porcelain --untracked-files=all | grep -v ' bug-finder/'; then
+            echo "::error::files changed outside bug-finder/"; exit 1
+          fi
+          extra=$(find bug-finder -type f ! -path 'bug-finder/input/*' ! -path bug-finder/candidates.json)
+          if [ -n "$extra" ]; then echo "::error::unexpected files: $extra"; exit 1; fi
+          # A missing file means the finder failed, not that it found nothing: find.md says to write [].
+          if [ ! -f bug-finder/candidates.json ]; then echo "::error::the finder wrote no candidates.json"; exit 1; fi
+          if [ "$(jq 'length' bug-finder/candidates.json)" = 0 ]; then
+            echo "has_candidates=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          jq -e 'type == "array" and length <= 6 and all(.[]; (.kind | IN("privacy","forbidden-file","chunk-size","ruling-wording","notice-missing")) and (.file | type == "string") and (.commit | type == "string"))' \
+            bug-finder/candidates.json > /dev/null || { echo "::error::candidates.json fails the schema"; exit 1; }
+          echo "has_candidates=true" >> "$GITHUB_OUTPUT"
+
+      - id: verifier
+        if: steps.isolate.outputs.has_candidates == 'true'
+        uses: anthropics/claude-code-action@9171db3e57d6a3140a37ddc2ba92788584e0ead6 # v1.0.234
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ github.token }}
+          display_report: "false"
+          show_full_output: "false"
+          settings: ${{ env.CLAUDE_SETTINGS }}
+          prompt: |
+            Read `.github/bug-finder/verify.md` and follow it exactly.
+            The candidates are in `bug-finder/candidates.json`; the new commits are listed in `bug-finder/input/commits.txt`.
+          claude_args: |
+            --model claude-fable-5-1
+            --max-turns 60
+            --setting-sources user
+            --strict-mcp-config
+            --allowedTools "Read,Grep,Glob,Edit(./bug-finder/drafts/**),Edit(./bug-finder/verdicts.json)"
+
+      - id: verifier_cost
+        if: always() && steps.verifier.outputs.execution_file != ''
+        env:
+          EXECUTION_FILE: ${{ steps.verifier.outputs.execution_file }}
+        run: |
+          node .github/bug-finder/cost.mjs "$EXECUTION_FILE" >> "$GITHUB_OUTPUT"
+          rm -f "$EXECUTION_FILE"
+
+      - name: Pack
+        run: |
+          set -euo pipefail
+          git remote set-url origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          if git status --porcelain --untracked-files=all | grep -v ' bug-finder/'; then
+            echo "::error::files changed outside bug-finder/"; exit 1
+          fi
+          mkdir -p bug-finder/out/drafts
+          if [ -d bug-finder/drafts ]; then
+            # Only regular files named <digits>.md directly in drafts/ (so no odd names reach the logs):
+            # anything else is an error, never shipped.
+            other=$(find bug-finder/drafts -mindepth 1 \( ! -type f -o ! -regex 'bug-finder/drafts/[0-9][0-9]*\.md' -o -path 'bug-finder/drafts/*/*' \))
+            if [ -n "$other" ]; then echo "::error::unexpected entries in drafts/: $other"; exit 1; fi
+            n=$(find bug-finder/drafts -maxdepth 1 -type f -name '*.md' | wc -l)
+            if [ "$n" -gt 3 ]; then echo "::error::$n drafts (max 3)"; exit 1; fi
+            find bug-finder/drafts -maxdepth 1 -type f -name '*.md' -exec cp {} bug-finder/out/drafts/ \;
+          fi
+
+      # The corpus only arrives now, after Claude is done.
+      - name: Restore model and corpus
+        uses: actions/cache/restore@v6.1.0
+        with:
+          path: |
+            spike/public/models
+            spike/public/data
+          key: assets-${{ hashFiles('spike/scripts/assets.json') }}
+
+      - name: Fetch model and corpus (SHA-256 checked)
+        run: node spike/scripts/fetch-assets.mjs
+
+      - name: Guard (Quran text + secrets, fail-closed)
+        env:
+          GUARD_SECRET_1: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          GUARD_SECRET_2: ${{ github.token }}
+        run: node .github/bug-finder/guard.mjs bug-finder/out
+
+      - id: count
+        run: echo "raw_count=$(find bug-finder/out/drafts -name '*.md' | wc -l)" >> "$GITHUB_OUTPUT"
+
+      - name: Summary (numbers only)
+        if: always()
+        env:
+          RAW: ${{ steps.count.outputs.raw_count }}
+          F_COST: ${{ steps.finder_cost.outputs.cost }}
+          F_TURNS: ${{ steps.finder_cost.outputs.turns }}
+          F_DENIED: ${{ steps.finder_cost.outputs.denied }}
+          V_COST: ${{ steps.verifier_cost.outputs.cost }}
+          V_TURNS: ${{ steps.verifier_cost.outputs.turns }}
+          V_DENIED: ${{ steps.verifier_cost.outputs.denied }}
+        run: |
+          cand=$(jq 'length' bug-finder/candidates.json 2>/dev/null || echo 0)
+          kept=$(jq '[.[] | select(.verdict == "kept")] | length' bug-finder/verdicts.json 2>/dev/null || echo 0)
+          {
+            echo "### Bug finder"
+            echo
+            echo "| | finder | verifier |"
+            echo "|---|---|---|"
+            echo "| Equivalent API cost | \$${F_COST:-0} | \$${V_COST:-0} |"
+            echo "| Turns | ${F_TURNS:-0} | ${V_TURNS:-0} |"
+            echo "| Denied tool calls | ${F_DENIED:-0} | ${V_DENIED:-0} |"
+            echo
+            echo "Candidates: $cand. Kept by the verifier: $kept. Drafts that passed the guard: ${RAW:-0}."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - if: steps.count.outputs.raw_count != '0'
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: drafts
+          path: bug-finder/out/
+          retention-days: 1
+
+  publish:
+    needs: [gate, find]
+    if: needs.find.result == 'success' && needs.find.outputs.raw_count != '0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ needs.gate.outputs.head_sha }}
+          fetch-depth: 0 # report.mjs checks each draft's commit and file against BASE..HEAD
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: 24
+
+      - name: Restore model and corpus
+        uses: actions/cache/restore@v6.1.0
+        with:
+          path: |
+            spike/public/models
+            spike/public/data
+          key: assets-${{ hashFiles('spike/scripts/assets.json') }}
+
+      - name: Fetch model and corpus (SHA-256 checked)
+        run: node spike/scripts/fetch-assets.mjs
+
+      - uses: actions/download-artifact@v7.0.0
+        with:
+          name: drafts
+          path: out
+
+      - name: Guard again (clean checkout)
+        env:
+          GUARD_SECRET_1: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          GUARD_SECRET_2: ${{ github.token }}
+        run: node .github/bug-finder/guard.mjs out
+
+      - name: Report
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GUARD_SECRET_1: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          GUARD_SECRET_2: ${{ github.token }}
+          HEAD_SHA: ${{ needs.gate.outputs.head_sha }}
+          BASE: ${{ needs.gate.outputs.base_sha }}
+        run: |
+          set -euo pipefail
+          ARGS=(--drafts out/drafts --head "$HEAD_SHA")
+          if [ -n "$BASE" ]; then ARGS+=(--base "$BASE"); fi
+          if [ "$DRY" = true ]; then
+            rc=0; node .github/bug-finder/report.mjs "${ARGS[@]}" --dry > "$RUNNER_TEMP/dry.md" || rc=$?
+            { echo "## Bug finder drafts (dry run)"; echo; cat "$RUNNER_TEMP/dry.md"; } >> "$GITHUB_STEP_SUMMARY"
+            exit $rc
+          else
+            node .github/bug-finder/report.mjs "${ARGS[@]}"
+          fi
