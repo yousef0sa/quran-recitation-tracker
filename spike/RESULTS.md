@@ -193,14 +193,16 @@ ORT's CPU optimizer already fuses the quantized MatMuls (242 `DynamicQuantizeMat
 
 ### Desktop results (maintainer set: 3 runs each; trust set: 1 run each)
 
+"Model ms per audio s" counts only the model time up to the end of the real recording, without the 2 s zero tail. A review found that the first version also counted the tail's model time, which overstated it by 4-6 %. The numbers below are recomputed from the saved logs with the fix. No verdict changed, and RTF and model step were not affected.
+
 | Lever | Config | Model step p50 (ms) | Model ms per audio s | RTF | Accuracy (both sets) | Verdict |
 |---|---|---|---|---|---|---|
-| — | B2 int8, t1 (M1) | 46.6-47.1 | 155-160 | 0.162-0.166 | baseline: 143/145, the same 3 ever-wrong, 0 issues; trust 232/232, 0 | — |
-| S1 | B2 int8, t4 (M2) | 28.3-30.4 | 104-108 | 0.111-0.115 | identical to t1 on both sets | **faster (≈1.6×), accuracy identical** |
-| S2 | B2 dequantized fp32, t1 (M3) | 60.7-62.8 | 204-220 | 0.211-0.226 | identical to M1 | **slower** (and 263 MB instead of 73 MB) |
-| S2 | B2 dequantized fp32, t4 (M4) | 35.1-42.5 | 124-148 | 0.130-0.154 | identical to M2 | **slower** |
-| A1 | A2 (a0w, 480 ms step), t1 (M6) | 50.6-53.8 | 116-120 | 0.120-0.125 | maintainer **137/145, 11 ever wrong/skipped, 1 issue**; trust 232/232, 0, interior p95 935 vs 1064 | **faster by ms/audio s, fails accuracy** |
-| A1 | A2, t4 (M7) | 29.1-32.2 | 69-74 | 0.074-0.079 | maintainer **142/145, 6 ever wrong/skipped**; trust 232/232, 0, interior p95 927 | **faster, fails accuracy** |
+| — | B2 int8, t1 (M1) | 46.6-47.1 | 148-153 | 0.162-0.166 | baseline: 143/145, the same 3 ever-wrong, 0 issues; trust 232/232, 0 | — |
+| S1 | B2 int8, t4 (M2) | 28.3-30.4 | 100-103 | 0.111-0.115 | identical to t1 on both sets | **faster (≈1.6×), accuracy identical** |
+| S2 | B2 dequantized fp32, t1 (M3) | 60.7-62.8 | 195-210 | 0.211-0.226 | identical to M1 | **slower** (and 263 MB instead of 73 MB) |
+| S2 | B2 dequantized fp32, t4 (M4) | 35.1-42.5 | 119-141 | 0.130-0.154 | identical to M2 | **slower** |
+| A1 | A2 (a0w, 480 ms step), t1 (M6) | 50.6-53.8 | 110-114 | 0.120-0.125 | maintainer **137/145, 11 ever wrong/skipped, 1 issue**; trust 232/232, 0, interior p95 935 vs 1064 | **faster by ms/audio s, fails accuracy** |
+| A1 | A2, t4 (M7) | 29.1-32.2 | 65-71 | 0.074-0.079 | maintainer **142/145, 6 ever wrong/skipped**; trust 232/232, 0, interior p95 927 | **faster, fails accuracy** |
 
 - **Prod threads (S1).** The flagged build runs 4 threads with 3 pthread workers and `crossOriginIsolated`: `VITE_EXPERIMENT_PROD_THREADS=1 npm run build`, preview on loopback, ORT's own `.mjs`/`.wasm` via `wasmPaths`.
   - Ready in about 4 s, with a recording per-word identical to the dev t4 baseline.
@@ -262,7 +264,7 @@ Runs:
 
 | Lever | Config vs reference | Speed t4 (maintainer, 3 runs) | Speed t1 | Maintainer set | Trust set | Verdict |
 |---|---|---|---|---|---|---|
-| S3 | **V3** = official v3 int8, chunk 24 vs B2 (c16) | **faster**: 70-73 vs 89-93 model ms per audio s; RTF 0.075-0.078 vs 0.095-0.099 | no measurable difference: 125-170 vs 153-187, noisy | 145/145 tracked (B2 143); 1:6 w1 confirmed in 5/5 files (B2 3/5); ever wrong: 4.aac 1:6 w3 is **new** (B2's 3 words gone at t1, 1 left at t4); ayah-end p50/p95 574/2040 vs 427/1878; first lock p50 +320 ms | **all guards pass**: 232/232, 0 wrong, interior 317/958 vs 335/1064 | **faster, fails one strict guard** (ever-wrong not a subset: 1 transient word, never final `wrong`) |
+| S3 | **V3** = official v3 int8, chunk 24 vs B2 (c16) | **faster**: 67-70 vs 85-89 model ms per audio s; RTF 0.075-0.078 vs 0.095-0.099 | no measurable difference: 119-162 vs 146-179, noisy | 145/145 tracked (B2 143); 1:6 w1 confirmed in 5/5 files (B2 3/5); ever wrong: 4.aac 1:6 w3 is **new** (B2's 3 words gone at t1, 1 left at t4); ayah-end p50/p95 574/2040 vs 427/1878; first lock p50 +320 ms | **all guards pass**: 232/232, 0 wrong, interior 317/958 vs 335/1064 | **faster, fails one strict guard** (ever-wrong not a subset: 1 transient word, never final `wrong`) |
 | S2 | V3F = official v3 fp32 vs V3 | **slower**: model p50 38.7-39.0 vs 30.8-31.4 ms (+25 %) | no measurable difference | ≈ V3 (1-3 per-word differences) | identical to V3 | **slower, no accuracy gain** |
 | S4 | V31 left 128 / left 64 vs V31 (left 256) | no measurable difference | no measurable difference | 139/145 and 142/145 tracked, 9-10 and 6 ever wrong | 228 and 221/232 tracked, **4 and 10 words flagged wrong in correct readings** | **no speed gain, fails accuracy** |
 | model | V31 = v3.1 int8 vs V3 | no measurable difference | no measurable difference | 141/145; 1:6 w1 missed in 3.aac and 5.ogg; new ever-wrong 1:3 w1 in 1.aac/4.aac; ayah-end 648/2387 | 230/232, 2 words flagged wrong in correct readings (T5 1:3 w1, T7 1:6 w1) | **worse than v3 here** |
