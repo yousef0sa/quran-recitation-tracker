@@ -81,6 +81,7 @@ Engine override and verdict log:
   - The name is a plain file name: no slashes, no leading dot, no `..`.
   - An invalid value falls back to the variant's model with a note, and the dev autorun rejects it.
   - The results record `modelPath`, and dev autorun files get `_m<name>`.
+  - `&io=<name>.io.json` loads a tilawa io manifest from `public/models/` instead of the variant's I/O settings (needed for an export with another T, hop or left context; make one with `scripts/model/make_io.py`). Same name rule and fallback; results record `ioPath`, files get `_io<name>` after the `_m` part.
 - Each EventLog entry also carries:
   - `modelMs` / `modelRuns`: the model's own share of `feed()`, timed by a wrapper around the ORT session;
   - `ctc {blank, top}`: the mean blank probability and the highest non-blank probability of that chunk's model steps;
@@ -114,7 +115,7 @@ See `RESULTS.md`.
 
 - `src/fatiha.ts` word table and mappings; `src/metrics.ts` latency/accuracy; `src/labels.ts` label format; `src/resample.ts` + `public/audio-processor.js` 16 kHz resampling (keep in sync); `src/tracker.worker.ts` model session; `src/tracker-client.ts`, `src/progress.ts`, `src/common.ts` page helpers.
 - `src/engine-config.ts` bench-only tilawa override (`?settle=`); `scripts/verdict-report.ts` offline report on a results + EventLog pair.
-- `src/model-session.ts` timed ORT session (model time, CTC posteriors); `src/model-override.ts` bench-only `?model=`; `src/voicing.ts` per-chunk voicing.
+- `src/model-session.ts` timed ORT session (model time, CTC posteriors); `src/model-override.ts` bench-only `?model=` and `?io=`; `src/voicing.ts` per-chunk voicing.
 - `scripts/compare-runs.ts` diffs two runs; `scripts/ayah-end-gate.ts` simulates an earlier ayah-end confirm; `scripts/model/` model inspection and dequantization (Python).
 - `scripts/assets.json` is the only place with asset URLs and hashes; `src/variants.ts` is the only place with variant settings.
 - Display text is tilawa's plain Uthmani, temporary until the KFGQPC text is integrated.

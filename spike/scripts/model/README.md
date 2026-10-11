@@ -61,3 +61,14 @@ python -I scripts/model/requantize.py dynamic <in.onnx> public/models/zipformer_
   quantize_dynamic's defaults would also turn the `Conv` nodes into `ConvInteger`. After writing, compare its op-type counts with
   `inspect_model.py` on the shipped file: only if they are identical is the result "per-tensor vs per-channel only".
 - Load a derived model in the bench with `?model=<file name>` (bench only).
+
+## `make_io.py`
+
+```bash
+python -I scripts/model/make_io.py public/models/<name>.onnx public/models/<name>.io.json
+```
+
+Builds tilawa's io manifest (T, hop = T - 13, 80 features, 251 vocab, inputs/outputs with dims, `encoderFrames` only when the
+graph has an extra output) from the graph itself, for an export the bench does not know. Fails on a T other than 61 (hop 48) or
+45 (hop 32). Left context is in the cache dims, so each export needs its own manifest. On the a0w model it reproduces the
+published `zipformer_a0w_ep1_a05.io.json`. Use it with `bench.html?model=<name>.onnx&io=<name>.io.json`.
