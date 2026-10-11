@@ -27,6 +27,22 @@ export function parseIoName(value: string | null | undefined): string | null {
   return value;
 }
 
+/**
+ * Asset paths (under models/) for the names in an init message. The worker re-checks them here because it must not trust
+ * a message, whatever the page validated; a name that fails parseModelName/parseIoName throws.
+ */
+export function overrideAssetPaths(modelName: string | undefined, ioName: string | undefined): { modelPath: string | null; ioPath: string | null } {
+  const model = modelName === undefined ? null : parseModelName(modelName);
+  if (modelName !== undefined && model === null) {
+    throw new RangeError(`اسم النموذج غير صالح / invalid model name (a file name in models/ ending in .onnx, no slashes or "..")`);
+  }
+  const io = ioName === undefined ? null : parseIoName(ioName);
+  if (ioName !== undefined && io === null) {
+    throw new RangeError(`اسم ملف io غير صالح / invalid io name (a file name in models/ ending in .io.json, no slashes or "..")`);
+  }
+  return { modelPath: model === null ? null : `models/${model}`, ioPath: io === null ? null : `models/${io}` };
+}
+
 /** "" without an io override, else "_io<name without .io.json>"; used in result file names (after the model suffix). */
 export function ioFileSuffix(name: string | null): string {
   return name === null ? "" : `_io${name.slice(0, -".io.json".length)}`;

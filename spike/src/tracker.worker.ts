@@ -15,7 +15,10 @@ import type { EngineOverride } from "./engine-config";
 import type { MainToWorker, WorkerToMain } from "./messages";
 import { toGlobalWordIndex } from "./fatiha";
 import type { CompactVerdict } from "./metrics";
+import { overrideAssetPaths } from "./model-override";
 import { createTimedSession, type OrtForSession, type TimedSession } from "./model-session";
+// Real only in VITE_EXPERIMENT_PROD_THREADS=1 builds; vite.config.ts swaps in ort-external-off.ts otherwise (see ort-external.ts).
+import { useExternalOrtWasm } from "./ort-external";
 import { CORPUS_PATH, VARIANTS, applyIoOverride, type VariantId } from "./variants";
 import { DEFAULT_THREADS, type Threads } from "./wasm-threads";
 
@@ -84,19 +87,6 @@ async function fetchJson(path: string): Promise<unknown> {
   return JSON.parse(text);
 }
 
-/**
- * Test-only (VITE_EXPERIMENT_PROD_THREADS=1 builds and dev server): load ORT's threaded .mjs and .wasm from their own
- * asset URLs, so a production build can start pthread workers. Without the flag ORT loads exactly as before.
- * Dynamic imports, so a plain build neither bundles nor emits these files.
- */
-async function useExternalOrtWasm(): Promise<void> {
-  const [{ default: mjs }, { default: wasm }] = await Promise.all([
-    import("onnxruntime-web/ort-wasm-simd-threaded.mjs?url"),
-    import("onnxruntime-web/ort-wasm-simd-threaded.wasm?url"),
-  ]);
-  ort.env.wasm.wasmPaths = { mjs, wasm };
-}
-
 async function initSession(
   variantId: VariantId,
   engine: EngineOverride = {},
@@ -120,8 +110,10 @@ async function initSession(
   if (import.meta.env.VITE_EXPERIMENT_PROD_THREADS === "1") await useExternalOrtWasm();
 
   // `?model=` (bench only) replaces the variant's model file; the variant's io still applies unless `?io=` names a manifest.
-  const modelPath = modelName === undefined ? variant.modelPath : `models/${modelName}`;
-  const ioPath = ioName === undefined ? null : `models/${ioName}`;
+  // The names are checked again here: the worker takes them from a message, not from the page's own validation.
+  const override = overrideAssetPaths(modelName, ioName);
+  const modelPath = override.modelPath ?? variant.modelPath;
+  const ioPath = override.ioPath;
   const [model, corpus, ioManifest] = await Promise.all([
     fetchModel(modelPath),
     fetchJson(CORPUS_PATH),

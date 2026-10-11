@@ -134,7 +134,11 @@ export interface Metrics {
   verdicts: Stats | null;
   /** Per-model-run time (ms): modelMs / modelRuns of the non-flush entries with runs; null for logs without modelMs. */
   model: Stats | null;
-  /** Σ modelMs of the non-flush entries / real audio seconds (tail excluded). Null without modelMs or without the real duration. */
+  /**
+   * Σ modelMs of the non-flush entries up to the end of the real audio (the zero tail excluded) / real audio seconds.
+   * Null without modelMs or without the real duration. A model run triggered by a tail chunk is not counted although it
+   * may still hold the last real frames (the lag is at most one model step), so this is slightly below the true cost.
+   */
   modelMsPerAudioSec: number | null;
   /** Real audio seconds (without the zero tail) given to computeMetrics; null when unknown. */
   realAudioSec: number | null;
@@ -182,6 +186,9 @@ export function summarize(values: readonly number[]): Stats | null {
   };
 }
 
+/** Slack (s) when comparing an entry's audioTimeSec with realAudioSec; far below one 16 kHz sample (62.5 us). */
+const REAL_AUDIO_EPS_SEC = 1e-6;
+
 /** `realAudioSec`: duration of the recording itself (the bench passes it without the zero tail); used only for modelMsPerAudioSec. */
 export function computeMetrics(log: EventLog, labels: Labels, realAudioSec?: number): Metrics {
   const cursorTime: (number | undefined)[] = new Array(WORD_COUNT).fill(undefined);
@@ -206,7 +213,7 @@ export function computeMetrics(log: EventLog, labels: Labels, realAudioSec?: num
       if (entry.verdictsMs !== undefined) verdictsValues.push(entry.verdictsMs);
       if (entry.modelMs !== undefined && entry.modelRuns) {
         modelValues.push(entry.modelMs / entry.modelRuns);
-        modelSum += entry.modelMs;
+        if (realAudioSec !== undefined && t <= realAudioSec + REAL_AUDIO_EPS_SEC) modelSum += entry.modelMs;
       }
     }
     verdictsSum += entry.verdictsMs ?? 0;
@@ -306,7 +313,7 @@ export interface Aggregate {
   compute: Stats | null;
   /** Per-model-run time pooled over all files (flush entries excluded); null for logs without modelMs. */
   model: Stats | null;
-  /** Σ modelMs (non-flush) / Σ real audio seconds, over the files that know their real duration; null without model data. */
+  /** Σ modelMs (non-flush, up to the end of the real audio) / Σ real audio seconds, over the files that know their real duration; null without model data. */
   modelMsPerAudioSec: number | null;
   /** Σ compute (flush included) / Σ audio duration. */
   rtf: number | null;
@@ -348,7 +355,7 @@ export function aggregateMetrics(items: readonly { metrics: Metrics; log: EventL
       if (!entry.flush) compute.push(entry.computeMs);
       if (!entry.flush && entry.modelMs !== undefined && entry.modelRuns) {
         model.push(entry.modelMs / entry.modelRuns);
-        if (metrics.realAudioSec !== null) modelSum += entry.modelMs;
+        if (metrics.realAudioSec !== null && entry.audioTimeSec <= metrics.realAudioSec + REAL_AUDIO_EPS_SEC) modelSum += entry.modelMs;
       }
     }
     if (metrics.realAudioSec !== null && metrics.model !== null) modelAudioSec += metrics.realAudioSec;

@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   AYAH_END_WORDS,
   DEFAULT_PARAMS,
+  analyze,
   buildCtx,
+  commonRecordings,
   confirmTimes,
   ctcWindow,
   evaluateCase,
@@ -18,6 +20,7 @@ import {
   type CompactVerdict,
   type FileCtx,
   type LogEntry,
+  type LogsJson,
   type Params,
   type ResultsJson,
 } from "./ayah-end-gate";
@@ -413,6 +416,31 @@ describe("old logs and tail", () => {
     }));
     expect(ctxOf(entries).search).toHaveLength(29);
     expect(fireIndex(ctxOf(entries), "R1", DEFAULT_PARAMS, 3)).toBeNull();
+  });
+});
+
+describe("commonRecordings and analyze without a common recording", () => {
+  const results = {
+    chunkMs: 80,
+    files: ["1.aac", "2.aac"].map((recording) => ({
+      recording,
+      durationSec: 1,
+      labelsFrom: `${recording}.json`,
+      metrics: { perWord: [] },
+      issues: [],
+    })),
+  } as unknown as ResultsJson;
+  const logsOf = (...names: string[]): LogsJson => ({ files: names.map((recording) => ({ recording, log: { entries: [] } })) }) as unknown as LogsJson;
+
+  it("splits the names into common / results only / logs only", () => {
+    expect(commonRecordings(results, logsOf("2.aac", "T1.aac"))).toEqual({ common: ["2.aac"], onlyInResults: ["1.aac"], onlyInLogs: ["T1.aac"] });
+    expect(commonRecordings(results, logsOf("T1.aac", "T2.aac")).common).toEqual([]);
+  });
+
+  it("analyze refuses to run (with or without --sweep) when nothing matches", () => {
+    for (const sweep of [false, true]) {
+      expect(() => analyze({ results, logs: logsOf("T1.aac"), labelsFor: () => ({ wordEnds: [] }), params: DEFAULT_PARAMS, sweep })).toThrow(/no recording/);
+    }
   });
 });
 

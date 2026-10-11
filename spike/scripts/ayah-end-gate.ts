@@ -13,7 +13,7 @@
 // never be "wrong" in a list after Rx, and for idx 28 the shown state must equal its last verdict's state.
 // Old logs without voice/ctc give R1/R2 "n/a". Labels: wordEnds of results files[].labelsFrom, read from --labels-dir
 // (default recordings/ or recordings/<recordingsDir>). Prints positions ("1:6 w1" = ayah 6, word 1), file numbers and numbers only,
-// never transcript or verse text. Exit code 1 when the R0 self-check fails, 2 on bad usage.
+// never transcript or verse text. Exit code 1 when the R0 self-check fails, 2 on bad usage or when no recording is in both files.
 // Node runs this file by stripping types: erasable syntax only, and only `node:` imports.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -637,6 +637,20 @@ export interface RunInput {
   sweep: boolean;
 }
 
+/** Recordings present in both the results file and the event logs (in results order), and those present in only one. */
+export function commonRecordings(
+  results: ResultsJson,
+  logs: LogsJson,
+): { common: string[]; onlyInResults: string[]; onlyInLogs: string[] } {
+  const inLogs = new Set(logs.files.map((f) => f.recording));
+  const inResults = new Set(results.files.map((f) => f.recording));
+  return {
+    common: results.files.map((f) => f.recording).filter((name) => inLogs.has(name)),
+    onlyInResults: results.files.map((f) => f.recording).filter((name) => !inLogs.has(name)),
+    onlyInLogs: logs.files.map((f) => f.recording).filter((name) => !inResults.has(name)),
+  };
+}
+
 function buildCtxs(input: RunInput, tail: boolean): FileCtx[] {
   const logs = new Map(input.logs.files.map((f) => [f.recording, f.log.entries]));
   const out: FileCtx[] = [];
@@ -679,6 +693,7 @@ const RULES: Rule[] = ["R1", "R2", "R3"];
 
 export function analyze(input: RunInput): Analysis {
   const { results, params } = input;
+  if (commonRecordings(results, input.logs).common.length === 0) throw new Error("no recording is in both the results file and the event logs");
   const full = buildCtxs(input, true);
   const noTail = buildCtxs(input, false);
   const lines: string[] = [];
@@ -802,6 +817,16 @@ function main(argv: string[]): void {
   }
   const results = readJson<ResultsJson>(resultsPath);
   const logs = readJson<LogsJson>(logsPath);
+  const match = commonRecordings(results, logs);
+  if (match.common.length === 0) {
+    console.error("no recording is in both the results file and the event logs (results and logs must come from the same run)");
+    console.error(`results: ${match.onlyInResults.join(", ") || "(none)"}`);
+    console.error(`logs: ${match.onlyInLogs.join(", ") || "(none)"}`);
+    process.exitCode = 2;
+    return;
+  }
+  if (match.onlyInResults.length > 0) console.error(`warning: in the results only, skipped: ${match.onlyInResults.join(", ")}`);
+  if (match.onlyInLogs.length > 0) console.error(`warning: in the logs only, skipped: ${match.onlyInLogs.join(", ")}`);
   const dir = labelsDir ?? (results.recordingsDir ? join("recordings", results.recordingsDir) : "recordings");
   let missing = false;
   const labelCache = new Map<string, { wordEnds: number[] }>();
@@ -839,7 +864,7 @@ function main(argv: string[]): void {
     for (const line of analysis.selfCheck) console.log("  " + line);
     process.exitCode = 1;
   } else {
-    console.log(`R0 self-check: all ${results.files.length * WORD_COUNT} words match perWord.confirmMs within ${SELF_CHECK_MS} ms`);
+    console.log(`R0 self-check: all ${match.common.length * WORD_COUNT} words match perWord.confirmMs within ${SELF_CHECK_MS} ms`);
   }
   console.log(analysis.lines.join("\n"));
 }
