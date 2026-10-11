@@ -14,9 +14,15 @@ export function defaultThreads(userAgent: string): Threads {
 /**
  * Thread count to request: `?threads=` or the device default on the dev server.
  * A production build always uses 1, whatever `?threads=` says: more than 1 hangs at load there (RESULTS.md, follow-up 2).
+ * Test-only exception: a local build made with VITE_EXPERIMENT_PROD_THREADS=1 (`prodThreadsExperiment`) behaves like the dev server.
  */
-export function requestThreads(value: string | null, userAgent: string, devServer: boolean): Threads {
-  return devServer ? parseThreads(value, defaultThreads(userAgent)) : DEFAULT_THREADS;
+export function requestThreads(
+  value: string | null,
+  userAgent: string,
+  devServer: boolean,
+  prodThreadsExperiment = false,
+): Threads {
+  return devServer || prodThreadsExperiment ? parseThreads(value, defaultThreads(userAgent)) : DEFAULT_THREADS;
 }
 
 /** `?threads=1|2|4`; anything else falls back to `fallback` (the device default). */

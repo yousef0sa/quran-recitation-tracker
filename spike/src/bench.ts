@@ -20,6 +20,7 @@ import {
 } from "./common";
 import { engineOverrideFrom, parseSettleFrames, type EngineOverride } from "./engine-config";
 import { WORD_COUNT } from "./fatiha";
+import { parseModelName } from "./model-override";
 import { parseLabels, type Labels } from "./labels";
 import {
   aggregateMetrics,
@@ -34,6 +35,7 @@ import {
 } from "./metrics";
 import { TrackerClient } from "./tracker-client";
 import { parseVariantId, type VariantId } from "./variants";
+import { voicingFeatures } from "./voicing";
 import { backendLabel, requestThreads, threadsStatusPart, type Threads } from "./wasm-threads";
 
 /** Seconds of zeros fed as ordinary chunks before stop(), so the last word's confirmation has a precise timestamp. */
@@ -62,6 +64,8 @@ interface RunResult {
   chunkMs: number;
   /** Tilawa engine override applied to the session (from `?settle=`); {} = tilawa defaults. */
   engineConfig: EngineOverride;
+  /** Model file the worker loaded (path under the site root); null until `ready`. With `?model=` it is `models/<name>`. */
+  modelPath: string | null;
   backend: string;
   /** WASM threads asked for (`?threads=`), what the worker really used (null until `ready`), and whether the page was cross-origin isolated. */
   requestedThreads: Threads;
@@ -107,17 +111,29 @@ const settleIgnoredNote =
     : null;
 
 /**
- * `?threads=`: absent or invalid uses the device default (4 on a phone, else 1); a production build always uses 1.
- * An ignored value is noted in the run.
+ * `?threads=`: absent or invalid uses the device default (4 on a phone, else 1); a production build always uses 1,
+ * except a local test build made with VITE_EXPERIMENT_PROD_THREADS=1. An ignored value is noted in the run.
  */
+const prodThreadsExperiment = import.meta.env.VITE_EXPERIMENT_PROD_THREADS === "1";
 const threadsParam = new URLSearchParams(location.search).get("threads");
-const requestedThreads = requestThreads(threadsParam, navigator.userAgent, import.meta.env.DEV);
+const requestedThreads = requestThreads(threadsParam, navigator.userAgent, import.meta.env.DEV, prodThreadsExperiment);
 const threadsIgnoredNote =
   threadsParam === null || String(requestedThreads) === threadsParam
     ? null
-    : import.meta.env.DEV
+    : import.meta.env.DEV || prodThreadsExperiment
       ? `قيمة threads غير صالحة (${threadsParam}): استُخدم العدد الافتراضي ${requestedThreads} / invalid threads ignored, default ${requestedThreads} used`
-      : `نسخة البناء تعمل بخيط واحد، تجوهلت threads=${threadsParam} / production build runs 1 thread, threads=${threadsParam} ignored`;
+      : `نسخة البناء تعمل بخيط واحد، تجوهلت threads=${threadsParam} / production build runs 1 thread (only a VITE_EXPERIMENT_PROD_THREADS=1 test build honours threads), threads=${threadsParam} ignored`;
+
+/**
+ * `?model=<name>.onnx` (bench only): a file in models/ used instead of the variant's model, with the variant's io.
+ * A bad value falls back to the variant's model and is noted in the run (a dev autorun refuses it instead).
+ */
+const modelParam = new URLSearchParams(location.search).get("model");
+const modelOverride = parseModelName(modelParam);
+const modelIgnoredNote =
+  modelParam !== null && modelOverride === null
+    ? `قيمة model غير صالحة (${modelParam}): استُخدم نموذج النسخة / invalid model ignored, the variant's model used`
+    : null;
 
 /** " | settleFrames=12" when an override is set, else "". */
 function engineLabel(engine: EngineOverride): string {
@@ -182,7 +198,7 @@ function render(result: RunResult): void {
   output.replaceChildren();
   output.append(
     para(
-      `${result.variant} | chunk ${result.chunkMs} ms${engineLabel(result.engineConfig)} | ${result.backend}${threadsLabel(result)} | cores ${result.hardwareConcurrency} | load ${formatMs(result.loadMs)} ms`,
+      `${result.variant} | chunk ${result.chunkMs} ms${engineLabel(result.engineConfig)}${modelOverride === null ? "" : ` | model ${modelOverride}`} | ${result.backend}${threadsLabel(result)} | cores ${result.hardwareConcurrency} | load ${formatMs(result.loadMs)} ms`,
       "note ltr",
     ),
   );
@@ -201,7 +217,7 @@ function render(result: RunResult): void {
         return h;
       })(),
       table(
-        ["files", "tracked", "cursor p50/p95/max ms", "confirm p50/p95/max ms", "false adv.", "restarts", "lock p50 s", "compute p50/p95/max ms", "RTF", "RTF+verdicts"],
+        ["files", "tracked", "cursor p50/p95/max ms", "confirm p50/p95/max ms", "false adv.", "restarts", "lock p50 s", "compute p50/p95/max ms", "model step p50/p95/max ms", "RTF", "RTF+verdicts"],
         [
           row([
             td(String(a.files)),
@@ -212,6 +228,7 @@ function render(result: RunResult): void {
             td(String(a.restarts)),
             td(a.timeToFirstLock ? a.timeToFirstLock.p50.toFixed(2) : "-"),
             td(stat(a.compute, 1)),
+            td(stat(a.model, 1)),
             td(a.rtf === null ? "-" : a.rtf.toFixed(3)),
             td(a.rtfWithVerdicts === null ? "-" : a.rtfWithVerdicts.toFixed(3)),
           ]),
@@ -322,6 +339,7 @@ async function run(recordings: File[], labelFiles: File[]): Promise<RunResult | 
     variant: variantId,
     chunkMs,
     engineConfig: engineOverride,
+    modelPath: null,
     backend: backendLabel(requestedThreads),
     requestedThreads,
     threads: null,
@@ -340,6 +358,7 @@ async function run(recordings: File[], labelFiles: File[]): Promise<RunResult | 
   const { byRecording, byFileName, problems } = await loadLabelFiles(labelFiles);
   result.skipped.push(...problems);
   if (settleIgnoredNote) result.skipped.push(settleIgnoredNote);
+  if (modelIgnoredNote) result.skipped.push(modelIgnoredNote);
   if (threadsIgnoredNote) result.skipped.push(threadsIgnoredNote);
 
   let issues: IssueRecord[] = [];
@@ -356,11 +375,18 @@ async function run(recordings: File[], labelFiles: File[]): Promise<RunResult | 
     // Fresh worker + init for every run (variant).
     setStatus(`جارٍ تحميل النموذج (${variantId})…`);
     const ready = client.next("ready");
-    client.post({ type: "init", variant: variantId, engine: engineOverride, threads: requestedThreads });
+    client.post({
+      type: "init",
+      variant: variantId,
+      engine: engineOverride,
+      threads: requestedThreads,
+      ...(modelOverride === null ? {} : { model: modelOverride }),
+    });
     const readyMessage = await ready;
     result.loadMs = readyMessage.loadMs;
     result.engineConfig = readyMessage.engine; // what the worker really applied
     result.threads = readyMessage.threads;
+    result.modelPath = readyMessage.modelPath;
     result.crossOriginIsolated = readyMessage.crossOriginIsolated;
     result.backend = backendLabel(readyMessage.threads);
 
@@ -379,15 +405,20 @@ async function run(recordings: File[], labelFiles: File[]): Promise<RunResult | 
       await resetDone;
       issues = [];
       const entries: EventLogEntry[] = [];
+      const realChunks = splitIntoChunks(audio, chunkSamples);
       const chunks = [
-        ...splitIntoChunks(audio, chunkSamples),
+        ...realChunks,
         ...splitIntoChunks(new Float32Array(Math.round(TAIL_PADDING_SEC * TARGET_RATE)), chunkSamples),
       ];
       for (const [chunkId, samples] of chunks.entries()) {
+        // Voicing of the real audio, before postMessage transfers (detaches) the buffer; the zero tail is "not real audio".
+        const voiceStarted = performance.now();
+        const voice = chunkId < realChunks.length ? voicingFeatures(samples, TARGET_RATE) : null;
+        const voiceMs = performance.now() - voiceStarted;
         const next = client.next("events");
         client.post({ type: "audio", chunkId, samples }, [samples.buffer]);
         const message = await next;
-        entries.push(entryFromEvents(message));
+        entries.push({ ...entryFromEvents(message), voice, ...(voice ? { voiceMs } : {}) });
         if (chunkId % 20 === 0) setStatus(`${prefix}: ${chunkId + 1}/${chunks.length}`);
       }
       setStatus(`${prefix}: إنهاء (stop)…`);
@@ -397,7 +428,7 @@ async function run(recordings: File[], labelFiles: File[]): Promise<RunResult | 
       entries.push(flushEntryFromStopped(flush));
 
       const log: EventLog = { variant: variantId, chunkMs, entries };
-      const metrics = computeMetrics(log, found.labels);
+      const metrics = computeMetrics(log, found.labels, audio.length / TARGET_RATE);
       result.files.push({
         recording: recording.name,
         labelsFrom: found.from,
@@ -412,7 +443,7 @@ async function run(recordings: File[], labelFiles: File[]): Promise<RunResult | 
     }
     setStatus(
       result.files.length > 0
-        ? `اكتمل: ${result.files.length} ملف (${variantId}، ${chunkMs} ms${result.engineConfig.settleFrames === undefined ? "" : `، settleFrames=${result.engineConfig.settleFrames}`}${threadsStatusPart(result.threads)}).`
+        ? `اكتمل: ${result.files.length} ملف (${variantId}، ${chunkMs} ms${result.engineConfig.settleFrames === undefined ? "" : `، settleFrames=${result.engineConfig.settleFrames}`}${modelOverride === null ? "" : `، model=${modelOverride}`}${threadsStatusPart(result.threads)}).`
         : "لم يُعالَج أي ملف: تأكد من مطابقة أسماء ملفات التعليم.",
       result.files.length === 0,
     );
@@ -448,6 +479,7 @@ function logsJson(result: RunResult): unknown {
     variant: result.variant,
     chunkMs: result.chunkMs,
     engineConfig: result.engineConfig,
+    modelPath: result.modelPath,
     backend: result.backend,
     requestedThreads: result.requestedThreads,
     threads: result.threads,
@@ -463,6 +495,7 @@ function summaryJson(result: RunResult) {
     variant: result.variant,
     chunkMs: result.chunkMs,
     engineConfig: result.engineConfig,
+    modelPath: result.modelPath,
     backend: result.backend,
     requestedThreads: result.requestedThreads,
     threads: result.threads,
@@ -486,6 +519,8 @@ function summaryJson(result: RunResult) {
       restarts: f.metrics.restarts,
       timeToFirstLockSec: f.metrics.timeToFirstLockSec,
       compute: f.metrics.compute,
+      model: f.metrics.model,
+      modelMsPerAudioSec: f.metrics.modelMsPerAudioSec,
       rtf: f.metrics.rtf,
       rtfWithVerdicts: f.metrics.rtfWithVerdicts,
       issues: f.issues.length,

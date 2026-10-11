@@ -302,6 +302,67 @@ describe("aggregateMetrics", () => {
   });
 });
 
+describe("model stats", () => {
+  // 10 chunks: 2 model steps in chunk 0 (4 ms each), 1 step (6 ms) in the others, one idle chunk, then a flush with 30 ms.
+  function modelLog(): EventLog {
+    const entries: EventLogEntry[] = [];
+    for (let i = 0; i < 10; i++) {
+      entries.push(
+        i === 5
+          ? { ...entry(i, (i + 1) * 0.08), modelMs: 0, modelRuns: 0 }
+          : i === 0
+            ? { ...entry(i, 0.08), modelMs: 8, modelRuns: 2 }
+            : { ...entry(i, (i + 1) * 0.08), modelMs: 6, modelRuns: 1 },
+      );
+    }
+    entries.push({ ...entry(-1, 0.8), flush: true, modelMs: 30, modelRuns: 5 });
+    return log(entries);
+  }
+
+  it("takes per-run ms from entries with runs, excluding the flush entry and idle chunks", () => {
+    const m = computeMetrics(modelLog(), labels, 0.8);
+    expect(m.model?.n).toBe(9);
+    expect(m.model?.p50).toBe(6);
+    expect(m.model?.max).toBe(6);
+    expect(m.compute?.n).toBe(10); // compute is unchanged by the model fields
+  });
+
+  it("modelMsPerAudioSec is Σ modelMs (no flush) / real audio seconds, and null when unknown", () => {
+    const m = computeMetrics(modelLog(), labels, 0.8);
+    expect(m.modelMsPerAudioSec).toBeCloseTo((8 + 8 * 6) / 0.8, 9);
+    expect(m.realAudioSec).toBe(0.8);
+    expect(computeMetrics(modelLog(), labels).modelMsPerAudioSec).toBeNull();
+    expect(computeMetrics(log(cleanEntries()), labels, 30).modelMsPerAudioSec).toBeNull();
+  });
+
+  it("older logs have no model stats", () => {
+    const m = computeMetrics(log(cleanEntries()), labels);
+    expect(m.model).toBeNull();
+    expect(m.realAudioSec).toBeNull();
+  });
+
+  it("aggregateMetrics pools the per-run values and the audio seconds over files", () => {
+    const a = modelLog();
+    const b = log(modelLog().entries.map((e) => (e.flush || e.modelRuns === 0 ? e : { ...e, modelMs: (e.modelMs as number) * 2 })));
+    const agg = aggregateMetrics([
+      { metrics: computeMetrics(a, labels, 0.8), log: a },
+      { metrics: computeMetrics(b, labels, 0.8), log: b },
+    ]);
+    expect(agg.model?.n).toBe(18);
+    expect(agg.model?.p50).toBeGreaterThan(6);
+    expect(agg.model?.p50).toBeLessThan(12);
+    expect(agg.model?.max).toBe(12);
+    expect(agg.modelMsPerAudioSec).toBeCloseTo((56 + 112) / 1.6, 9);
+  });
+
+  it("aggregateMetrics has no model stats for older logs", () => {
+    const a = log(cleanEntries());
+    const agg = aggregateMetrics([{ metrics: computeMetrics(a, labels), log: a }]);
+    expect(agg.model).toBeNull();
+    expect(agg.modelMsPerAudioSec).toBeNull();
+  });
+});
+
 describe("log entry builders (pin the existing worker-message -> EventLogEntry mapping)", () => {
   const events: WorkerOutbound[] = [wp(2, [0, 1])];
 
@@ -371,6 +432,24 @@ describe("log entry builders (pin the existing worker-message -> EventLogEntry m
       plain.entries.map((e, i) => (i % 3 === 0 ? { ...e, verdicts: [{ w: 0, s: "wrong" as const, d: 9, h: 0, m: 0 }] } : e)),
     );
     expect(computeMetrics(withVerdicts, labels)).toEqual(computeMetrics(plain, labels));
+  });
+
+  it("carry the model fields when the message has them and leave them absent otherwise", () => {
+    const base = { samplesFed: 16000, computeMs: 9, verdictsMs: 1, confirmed: [0], events };
+    const ctc = { blank: 0.97, top: 0.01 };
+    const withModel = entryFromEvents({ type: "events", chunkId: 0, ...base, modelMs: 6.5, modelRuns: 1, ctc });
+    expect(withModel).toMatchObject({ modelMs: 6.5, modelRuns: 1, ctc });
+    // no model step in this chunk: runs 0 and no ctc
+    const idle = entryFromEvents({ type: "events", chunkId: 1, ...base, modelMs: 0, modelRuns: 0 });
+    expect(idle.modelMs).toBe(0);
+    expect(idle.modelRuns).toBe(0);
+    expect("ctc" in idle).toBe(false);
+    const old = entryFromEvents({ type: "events", chunkId: 2, ...base });
+    for (const key of ["modelMs", "modelRuns", "ctc", "voice", "voiceMs"]) expect(key in old).toBe(false);
+
+    const flush = flushEntryFromStopped({ type: "stopped", ...base, modelMs: 12, modelRuns: 2, ctc });
+    expect(flush).toMatchObject({ modelMs: 12, modelRuns: 2, ctc, flush: true });
+    expect("modelMs" in flushEntryFromStopped({ type: "stopped", ...base })).toBe(false);
   });
 
   it("the builders' output feeds computeMetrics like a hand-built entry", () => {

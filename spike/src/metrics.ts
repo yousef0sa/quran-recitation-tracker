@@ -7,6 +7,7 @@ import { TARGET_RATE } from "./audio";
 import type { Labels } from "./labels";
 import type { WorkerToMain } from "./messages";
 import type { VariantId } from "./variants";
+import type { VoiceFeatures } from "./voicing";
 
 /** One tilawa word verdict for a Fatiha word. w = global index 0..28; d/h/m = distance, heardRatio, margin rounded to 3 decimals. */
 export interface CompactVerdict {
@@ -42,6 +43,34 @@ export interface EventLogEntry {
    * Its computeMs is the stop() time; it is kept out of the per-chunk compute stats but counts for RTF.
    */
   flush?: boolean;
+  /** Σ of the model's session.run times in this feed()/stop() (the model's share of computeMs). Absent in older logs. */
+  modelMs?: number;
+  /** Number of session.run calls (model steps) in this feed()/stop(). Absent in older logs. */
+  modelRuns?: number;
+  /** CTC posteriors of this entry's model steps: mean P(blank) and max non-blank probability. Present only when modelRuns > 0. */
+  ctc?: CtcStats;
+  /**
+   * Bench only: voicing of this chunk's real audio (see voicing.ts). `null` = not real audio (the zero tail),
+   * absent = older log or no voicing computed. Raw audio is never logged.
+   */
+  voice?: VoiceFeatures | null;
+  /** Bench only: time of the voicing computation, kept out of computeMs. */
+  voiceMs?: number;
+}
+
+/** CTC posterior summary of one entry (see model-session.ts). */
+export interface CtcStats {
+  blank: number;
+  top: number;
+}
+
+/** The model fields of a worker message, copied into the log entry when present. */
+function modelFields(message: { modelMs?: number; modelRuns?: number; ctc?: CtcStats }): Pick<EventLogEntry, "modelMs" | "modelRuns" | "ctc"> {
+  return {
+    ...(message.modelMs !== undefined ? { modelMs: message.modelMs } : {}),
+    ...(message.modelRuns !== undefined ? { modelRuns: message.modelRuns } : {}),
+    ...(message.ctc ? { ctc: message.ctc } : {}),
+  };
 }
 
 /** Log entry for a worker "events" message (audio time = samplesFed / 16000). */
@@ -54,6 +83,7 @@ export function entryFromEvents(message: Extract<WorkerToMain, { type: "events" 
     events: message.events,
     confirmed: message.confirmed,
     ...(message.verdicts ? { verdicts: message.verdicts } : {}),
+    ...modelFields(message),
   };
 }
 
@@ -67,6 +97,7 @@ export function flushEntryFromStopped(message: Extract<WorkerToMain, { type: "st
     events: message.events,
     confirmed: message.confirmed,
     ...(message.verdicts ? { verdicts: message.verdicts } : {}),
+    ...modelFields(message),
     flush: true,
   };
 }
@@ -101,6 +132,12 @@ export interface Metrics {
   compute: Stats | null;
   /** Per-chunk session.verdicts() snapshot time (ms); null for logs without verdictsMs. */
   verdicts: Stats | null;
+  /** Per-model-run time (ms): modelMs / modelRuns of the non-flush entries with runs; null for logs without modelMs. */
+  model: Stats | null;
+  /** Σ modelMs of the non-flush entries / real audio seconds (tail excluded). Null without modelMs or without the real duration. */
+  modelMsPerAudioSec: number | null;
+  /** Real audio seconds (without the zero tail) given to computeMetrics; null when unknown. */
+  realAudioSec: number | null;
   /** Words (0..28) never confirmed. */
   missedWords: number[];
   /** Words (0..27) the cursor never advanced past. */
@@ -145,7 +182,8 @@ export function summarize(values: readonly number[]): Stats | null {
   };
 }
 
-export function computeMetrics(log: EventLog, labels: Labels): Metrics {
+/** `realAudioSec`: duration of the recording itself (the bench passes it without the zero tail); used only for modelMsPerAudioSec. */
+export function computeMetrics(log: EventLog, labels: Labels, realAudioSec?: number): Metrics {
   const cursorTime: (number | undefined)[] = new Array(WORD_COUNT).fill(undefined);
   const confirmTime: (number | undefined)[] = new Array(WORD_COUNT).fill(undefined);
   let prevCursor: number | null = null;
@@ -155,6 +193,8 @@ export function computeMetrics(log: EventLog, labels: Labels): Metrics {
   let computeSum = 0;
   const computeValues: number[] = [];
   const verdictsValues: number[] = [];
+  const modelValues: number[] = [];
+  let modelSum = 0;
   let verdictsSum = 0;
 
   for (const entry of log.entries) {
@@ -164,6 +204,10 @@ export function computeMetrics(log: EventLog, labels: Labels): Metrics {
     if (!entry.flush) {
       computeValues.push(entry.computeMs);
       if (entry.verdictsMs !== undefined) verdictsValues.push(entry.verdictsMs);
+      if (entry.modelMs !== undefined && entry.modelRuns) {
+        modelValues.push(entry.modelMs / entry.modelRuns);
+        modelSum += entry.modelMs;
+      }
     }
     verdictsSum += entry.verdictsMs ?? 0;
 
@@ -235,6 +279,9 @@ export function computeMetrics(log: EventLog, labels: Labels): Metrics {
     confirm: summarize(confirmLatencies),
     compute: summarize(computeValues),
     verdicts: summarize(verdictsValues),
+    model: summarize(modelValues),
+    modelMsPerAudioSec: modelValues.length > 0 && realAudioSec !== undefined && realAudioSec > 0 ? modelSum / realAudioSec : null,
+    realAudioSec: realAudioSec !== undefined && realAudioSec > 0 ? realAudioSec : null,
     missedWords,
     cursorMissedWords,
     falseAdvances: falseAdvanceWords.length,
@@ -257,6 +304,10 @@ export interface Aggregate {
   confirm: Stats | null;
   /** Per-chunk compute pooled over all files (flush entries excluded). */
   compute: Stats | null;
+  /** Per-model-run time pooled over all files (flush entries excluded); null for logs without modelMs. */
+  model: Stats | null;
+  /** Σ modelMs (non-flush) / Σ real audio seconds, over the files that know their real duration; null without model data. */
+  modelMsPerAudioSec: number | null;
   /** Σ compute (flush included) / Σ audio duration. */
   rtf: number | null;
   rtfWithVerdicts: number | null;
@@ -276,7 +327,10 @@ export function aggregateMetrics(items: readonly { metrics: Metrics; log: EventL
   const cursor: number[] = [];
   const confirm: number[] = [];
   const compute: number[] = [];
+  const model: number[] = [];
   const locks: number[] = [];
+  let modelSum = 0;
+  let modelAudioSec = 0;
   let computeSum = 0;
   let verdictsSum = 0;
   let duration = 0;
@@ -292,7 +346,12 @@ export function aggregateMetrics(items: readonly { metrics: Metrics; log: EventL
       computeSum += entry.computeMs;
       verdictsSum += entry.verdictsMs ?? 0;
       if (!entry.flush) compute.push(entry.computeMs);
+      if (!entry.flush && entry.modelMs !== undefined && entry.modelRuns) {
+        model.push(entry.modelMs / entry.modelRuns);
+        if (metrics.realAudioSec !== null) modelSum += entry.modelMs;
+      }
     }
+    if (metrics.realAudioSec !== null && metrics.model !== null) modelAudioSec += metrics.realAudioSec;
     if (metrics.timeToFirstLockSec !== null) locks.push(metrics.timeToFirstLockSec);
     duration += metrics.audioDurationSec;
     confirmedWords += metrics.confirmedWords;
@@ -305,6 +364,8 @@ export function aggregateMetrics(items: readonly { metrics: Metrics; log: EventL
     cursor: summarize(cursor),
     confirm: summarize(confirm),
     compute: summarize(compute),
+    model: summarize(model),
+    modelMsPerAudioSec: modelAudioSec > 0 ? modelSum / modelAudioSec : null,
     rtf: duration > 0 ? computeSum / (duration * 1000) : null,
     rtfWithVerdicts: duration > 0 ? (computeSum + verdictsSum) / (duration * 1000) : null,
     audioDurationSec: duration,

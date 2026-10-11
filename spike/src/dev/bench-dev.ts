@@ -1,6 +1,7 @@
 // Dev-only bench additions: use spike/recordings without file pickers, and URL autorun
 // (bench.html?autorun=1&variant=A1&chunk=150, plus &settle=12 to override tilawa's settleFrames and
-// &threads=2|4 for WASM threads; a run that did not get the threads it asked for is saved with `_req<N>` and ends as error).
+// &threads=2|4 for WASM threads, &model=<name>.onnx for another file in public/models/ (name rule: model-override.ts;
+// the result file name gets `_m<name>` after the threads suffix); a run that did not get the threads it asked for is saved with `_req<N>` and ends as error).
 // `&dir=trust` (also for the button) uses the recordings in spike/recordings/trust/ instead of the top level;
 // the name rule is RECORDINGS_DIR_PATTERN, the same one the dev server enforces. Result files then get a
 // `_<dir>` part and the results/summary JSON a `recordingsDir` field (null for the top level).
@@ -8,6 +9,7 @@
 import { CHUNK_MS_OPTIONS } from "../audio";
 import { errorMessage } from "../common";
 import { SETTLE_FRAMES_MAX, SETTLE_FRAMES_MIN, engineConfigSuffix, parseSettleFrames, type EngineOverride } from "../engine-config";
+import { modelFileSuffix, parseModelName } from "../model-override";
 import { isValidRecordingsDir, RECORDINGS_DIR_PATTERN } from "./recordings-dir";
 import { fetchLabelsFile, fetchRecordingFile, listRecordings, postResult, resultFileName } from "./dev-api";
 import { isVariantId } from "../variants";
@@ -120,6 +122,11 @@ export function initBenchDev<R>(host: BenchDevHost<R>): void {
       if (threads !== null && String(parseThreads(threads)) !== threads) {
         throw new Error(`unsupported threads "${threads}" (use ${THREAD_OPTIONS.join(", ")})`);
       }
+      // And for model: bench.ts ignores a bad name with a note, an autorun refuses it.
+      const model = params.get("model");
+      if (model !== null && parseModelName(model) === null) {
+        throw new Error(`unsupported model "${model}" (a file name in public/models/ ending in .onnx, no slashes or "..")`);
+      }
       const dir = recordingsDirParam();
 
       const count = await useDevRecordings();
@@ -146,7 +153,7 @@ export function initBenchDev<R>(host: BenchDevHost<R>): void {
       const saved: string[] = [];
       let saveError: string | null = null;
       try {
-        const suffix = engineConfigSuffix(results.engineConfig) + threadsFileSuffix(results.requestedThreads, results.threads);
+        const suffix = engineConfigSuffix(results.engineConfig) + threadsFileSuffix(results.requestedThreads, results.threads) + modelFileSuffix(parseModelName(model));
         saved.push(await postResult(resultFileName(now, results.variant, results.chunkMs, "results", suffix, dir), results));
         saved.push(
           await postResult(

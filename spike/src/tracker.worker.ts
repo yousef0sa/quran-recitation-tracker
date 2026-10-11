@@ -14,6 +14,7 @@ import type { EngineOverride } from "./engine-config";
 import type { MainToWorker, WorkerToMain } from "./messages";
 import { toGlobalWordIndex } from "./fatiha";
 import type { CompactVerdict } from "./metrics";
+import { createTimedSession, type OrtForSession, type TimedSession } from "./model-session";
 import { CORPUS_PATH, VARIANTS, applyIoOverride, type VariantId } from "./variants";
 import { DEFAULT_THREADS, type Threads } from "./wasm-threads";
 
@@ -31,6 +32,8 @@ const MAX_ISSUE_ROUNDS = 20;
 class LoadError extends Error {}
 
 let session: ZipformerSession | null = null;
+/** Times the ORT runs of `session` and reads its CTC posteriors. */
+let timed: TimedSession | null = null;
 let samplesFed = 0;
 let notReadyReported = false;
 /** JSON of the last verdict list seen this session; a list is logged only when it differs. */
@@ -80,9 +83,28 @@ async function fetchJson(path: string): Promise<unknown> {
   return JSON.parse(text);
 }
 
-async function initSession(variantId: VariantId, engine: EngineOverride = {}, threads: Threads = DEFAULT_THREADS): Promise<void> {
+/**
+ * Test-only (VITE_EXPERIMENT_PROD_THREADS=1 builds and dev server): load ORT's threaded .mjs and .wasm from their own
+ * asset URLs, so a production build can start pthread workers. Without the flag ORT loads exactly as before.
+ * Dynamic imports, so a plain build neither bundles nor emits these files.
+ */
+async function useExternalOrtWasm(): Promise<void> {
+  const [{ default: mjs }, { default: wasm }] = await Promise.all([
+    import("onnxruntime-web/ort-wasm-simd-threaded.mjs?url"),
+    import("onnxruntime-web/ort-wasm-simd-threaded.wasm?url"),
+  ]);
+  ort.env.wasm.wasmPaths = { mjs, wasm };
+}
+
+async function initSession(
+  variantId: VariantId,
+  engine: EngineOverride = {},
+  threads: Threads = DEFAULT_THREADS,
+  modelName?: string,
+): Promise<void> {
   const started = performance.now();
   session = null;
+  timed = null;
   samplesFed = 0;
   notReadyReported = false;
   lastVerdictKey = "";
@@ -93,15 +115,19 @@ async function initSession(variantId: VariantId, engine: EngineOverride = {}, th
   if (!isolated && threads > 1) console.warn("[spike] not cross-origin isolated: using 1 thread", { requested: threads });
   ort.env.wasm.numThreads = isolated ? threads : 1;
   ort.env.wasm.simd = true;
+  if (import.meta.env.VITE_EXPERIMENT_PROD_THREADS === "1") await useExternalOrtWasm();
 
-  const [model, corpus] = await Promise.all([fetchModel(variant.modelPath), fetchJson(CORPUS_PATH)]);
+  // `?model=` (bench only) replaces the variant's model file; the variant's io still applies.
+  const modelPath = modelName === undefined ? variant.modelPath : `models/${modelName}`;
+  const [model, corpus] = await Promise.all([fetchModel(modelPath), fetchJson(CORPUS_PATH)]);
+  // The session is created here (tilawa's own options) so each run can be timed and its posteriors read.
+  const wrapper = await createTimedSession(ort as unknown as OrtForSession, model);
   const created = await createZipformerSession({
-    ort,
-    model,
+    session: wrapper.session,
+    Tensor: ort.Tensor,
     corpus,
     stayOnSurah: true,
     structural: false,
-    executionProviders: ["wasm"],
     ...(variant.io ? { io: applyIoOverride(DEFAULT_ZIPFORMER_IO, variant.io) } : {}),
     // Omitted when empty, so a run without overrides takes the same code path as before this option existed.
     ...(Object.keys(engine).length > 0 ? { config: engine } : {}),
@@ -112,6 +138,7 @@ async function initSession(variantId: VariantId, engine: EngineOverride = {}, th
     if (variant.expected) created.setExpected(variant.expected);
   }
   session = created;
+  timed = wrapper;
   // Read back after the session exists: what ORT really uses (it resets the value itself when it cannot run threads).
   const effective = ort.env.wasm.numThreads ?? 1;
   console.info("[spike] model ready", { variant: variantId, engine, requestedThreads: threads, threads: effective, crossOriginIsolated: isolated });
@@ -123,6 +150,7 @@ async function initSession(variantId: VariantId, engine: EngineOverride = {}, th
     requestedThreads: threads,
     threads: effective,
     crossOriginIsolated: isolated,
+    modelPath,
   });
 }
 
@@ -195,6 +223,14 @@ function snapshotVerdicts(
   return { confirmed, ...(changed || always ? { verdicts: list } : {}), verdictsMs: performance.now() - started };
 }
 
+/** Model time and CTC posteriors of the runs since the last call (ctc only when there were runs). */
+function takeModel(): { modelMs: number; modelRuns: number; ctc?: { blank: number; top: number } } {
+  const taken = timed?.take();
+  if (!taken) return { modelMs: 0, modelRuns: 0 };
+  const { modelMs, runs, blank, top } = taken;
+  return { modelMs, modelRuns: runs, ...(runs > 0 && blank !== null && top !== null ? { ctc: { blank, top } } : {}) };
+}
+
 async function handleAudio(chunkId: number, samples: Float32Array): Promise<void> {
   if (!session) {
     if (!notReadyReported) {
@@ -209,7 +245,7 @@ async function handleAudio(chunkId: number, samples: Float32Array): Promise<void
   samplesFed += samples.length;
   const resolved = resolveIssues(session, events, chunkId);
   const { confirmed, verdicts, verdictsMs } = snapshotVerdicts(session);
-  post({ type: "events", chunkId, samplesFed, computeMs, verdictsMs, confirmed, ...(verdicts ? { verdicts } : {}), events: resolved });
+  post({ type: "events", chunkId, samplesFed, computeMs, verdictsMs, confirmed, ...(verdicts ? { verdicts } : {}), ...takeModel(), events: resolved });
 }
 
 async function handleStop(): Promise<void> {
@@ -222,14 +258,15 @@ async function handleStop(): Promise<void> {
   const computeMs = performance.now() - started;
   const resolved = resolveIssues(session, events, -1);
   const { confirmed, verdicts, verdictsMs } = snapshotVerdicts(session, true);
-  post({ type: "stopped", samplesFed, computeMs, verdictsMs, confirmed, verdicts, events: resolved });
+  post({ type: "stopped", samplesFed, computeMs, verdictsMs, confirmed, verdicts, ...takeModel(), events: resolved });
 }
 
 function handle(message: MainToWorker): Promise<void> {
   switch (message.type) {
     case "init":
-      return initSession(message.variant, message.engine, message.threads).catch((err: unknown) => {
+      return initSession(message.variant, message.engine, message.threads, message.model).catch((err: unknown) => {
         session = null;
+        timed = null;
         post({ type: "error", stage: "load", message: loadMessage(err) });
       });
     case "audio":
@@ -243,6 +280,7 @@ function handle(message: MainToWorker): Promise<void> {
     case "reset":
       try {
         session?.reset();
+        timed?.take(); // discard, so nothing carries over between files
         samplesFed = 0;
         lastVerdictKey = "";
         post({ type: "resetDone" });
