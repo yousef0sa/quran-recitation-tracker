@@ -170,7 +170,12 @@ Setup: B2 @ 80 ms, headless Chromium 153.0.8010.12, WASM single-thread, `@tilawa
 >   - نموذج v3 الرسمي (مقطع 24) أسرع بنحو 22% بأربعة خيوط، ويتتبع كل الكلمات، ويؤكد 1:6 w1 في كل الملفات، ونظيف على مجموعة الثقة.
 >   - لكنه يرسب في شرط صارم واحد (كلمة جديدة ظهرت خطأ مؤقتًا)، ونهاية الآية عنده أبطأ قليلًا.
 >   - fp32 الرسمي أبطأ بلا فائدة. v3.1 أسوأ من v3 هنا. وتقصير الذاكرة (left 128/64) لا يسرّع، ويزيد الأخطاء الكاذبة.
-> - قياسات الجوال لم تُشغَّل بعد.
+> - الجوال:
+>   - لا تغيّر في المتصفح.
+>   - 4 خيوط تعمل في نسخة الإنتاج التجريبية بلا تعلّق.
+>   - v3 الرسمي أسرع بنحو 17–20%، بنفس صورة الدقة التي ظهرت على الكمبيوتر.
+>   - fp32 لا يتسع له الجوال.
+>   - ما زال RTF على الجوال فوق الهدف (0.55 مع v3).
 >
 > لم يتغيّر أي إعداد افتراضي.
 
@@ -288,19 +293,51 @@ Notes:
   - Extra, on V3: R3 rows pass on each set separately, but the best rows differ between the sets. The best maintainer row gives p95 2040 → 1733; the best trust row has a margin of only +6 ms. This is no evidence of a safe single setting.
   - The R2 window and the sweep grid were picked for a 320 ms step.
 
+### Phone (Redmi Note 8, 2026-10-11)
+
+Setup:
+- Chrome 138.0.7204.179, the same version as follow-up 2, so no browser drift.
+- 3.7 GB RAM, about 790 MB free with Chrome open.
+- Dev server on 127.0.0.1 over `adb reverse`, chunk 80 ms, variant B2.
+- Battery 36.5-41 °C. A 1 °C gate before each run hit its 10 min cap 3 times.
+- Every t4 run got 4 threads.
+- Raw data: `results/20261011-1811*` to `-1928*`.
+
+Controls:
+- **No drift.** P1 (t1) is per-word identical to `20261010-175959`. The 3 P2 (t4) runs are identical to `20261010-180617` and to each other.
+- feed > 5 ms p50: 373 ms at t1 and 200 ms at t4, against 367 and 200 in follow-up 2.
+
+| Lever | Config vs reference (phone, t4) | Speed (maintainer, 3 interleaved runs) | Maintainer set | Trust set | Verdict |
+|---|---|---|---|---|---|
+| S1 | B2 t4 (P2) vs t1 (P1) | RTF 0.671-0.682 vs 1.242 | 1 word ok → unsure (1.aac 1:4 w3), the 1 allowed flip, the same as follow-up 2 | identical | **accuracy passes** |
+| S3 | **V3** (official v3 int8) vs B2 | **faster**: 494-522 vs 614-625 model ms per audio s; RTF 0.545-0.575 vs 0.671-0.682 (about 17 % lower) | same as desktop V3: 145/145 tracked, 1:6 w1 in 5/5, new transient ever-wrong 4.aac 1:6 w3, 5 ok/unsure final flips | **all guards pass** (232/232, 0 wrong; interior 317/958 vs 335/1064) | **faster, the same accuracy picture as desktop** |
+| S2 | V3F (official fp32) | — | — | — | **does not load**: `std::bad_alloc` creating the session (263 MB file, about 790 MB free) |
+
+- Per-step model time is longer for V3: p50 230-252 ms against 193-195 ms (feed > 5 ms: 238-255 against 199-202), because each step is 480 ms. It is reported, not judged.
+- RTF is still far above the 0.3 target on this phone, for every config.
+- Per-word, phone V3 at t4 matches desktop V3 at **t1**, not desktop t4 (the difference is 4.aac 1:5 w4). So this case depends on the device's numerics, not only on the thread count.
+- **Flagged production build on the phone** (`VITE_EXPERIMENT_PROD_THREADS=1`, `index.html?threads=4`, checked over remote debugging, no microphone):
+  - The model loads in 12.7 s.
+  - The stats line shows `WASM 4 threads`, `crossOriginIsolated` is true, and there are 4 workers.
+  - No hang within 60 s.
+  - The plain build is unchanged: 1 thread.
+- **Guard note for V3 (desktop and phone):**
+  - Under the hop-changing rule (Task 8, A1 style), it fails only the strict "ever-wrong is a subset" check, by 1 transient word. The count is lower than B2's (1-2 words against 3).
+  - The general "at most 1 ok ↔ unsure final flip" guard, which the plan writes for same-step comparisons, would also fail: 5 flips on the phone, 6 on desktop.
+
 ### Not run yet
-- **Phone (Redmi Note 8):** every speed verdict above is desktop only. The phone kit (exact URLs and baselines `20261010-175959` / `-180617`) is in the plan's Task 10.
-- **Phase B on the phone:** V3 at the phone's thread count, on both sets (`?model=zipformer_p_arabic_v3.int8.onnx&io=zipformer_p_arabic_v3.int8.io.json`). This checks whether the desktop gain holds without SDOT.
+- PV3F at t1 or with other Chrome tabs closed, which might fit in memory. Desktop says fp32 is slower anyway.
 
 ### Recommendation (pending the maintainer's decision; no default was changed)
 1. **S1:**
    - Fix the production thread hang with ORT's own `.mjs`/`.wasm` (already behind the flag).
-   - Lift the production 1-thread rule only after the phone runs (P2 on both sets) pass the guards.
-2. **Drop S2 (fp32).** The dequantized B2 and the official v3 fp32 are both slower on the desktop, with no accuracy gain. If anything, check it once on the phone, since the phone lacks the dot-product instructions.
+   - The phone runs now pass: P2 on both sets, and the flagged build runs 4 threads on the phone. **The 1-thread production rule can be lifted** (make the flag the default) if the maintainer agrees.
+2. **Drop S2 (fp32).** The dequantized B2 and the official v3 fp32 are both slower on the desktop, with no accuracy gain, and the fp32 file does not even load on the phone.
 3. **Do not switch to a0w (A1).** It is faster per second of audio, but it loses tracking on the maintainer set and depends on the thread count.
 4. **V3 (official v3 int8, chunk 24) is the one open candidate.** It is about 22 % less model time per audio second at t4, tracks better, has a clean trust set and confirms 1:6 w1 everywhere.
-   - It fails the strict "ever-wrong is a subset" guard by one transient word, and its ayah-end confirm is about 150 ms later.
-   - Adopting it is the maintainer's call, after a phone run.
+   - On the phone it is about 17-20 % faster as well, with the same per-word accuracy picture as desktop.
+   - It fails the strict "ever-wrong is a subset" guard by one transient word, and changes 5-6 final states between ok and unsure. Its ayah-end confirm is about 150 ms later.
+   - Adopting it is the maintainer's call.
    - It would also need a license and hosting decision: the file is gated, and `assets.json` has no auth.
 5. **Drop v3.1 and the shorter left contexts** on this evidence: no speed gain, and more false `wrong` flags on correct readings.
 6. **Ayah-end:**
