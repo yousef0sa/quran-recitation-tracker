@@ -166,6 +166,10 @@ Setup: B2 @ 80 ms, headless Chromium 153.0.8010.12, WASM single-thread, `@tilawa
 > - fp32 أبطأ من int8، فرفضناه.
 > - نموذج a0w أسرع بنحو 25% لكنه أقل دقة على تسجيلاتك، فرفضناه.
 > - بوابة «صمت أم مد» لنهاية الآية آمنة على تسجيلاتك، لكن فائدتها شبه معدومة، وفيها حالات مبكرة على مجموعة الثقة. وبوابة احتمال الفراغ (CTC) تؤكد أثناء المد، فرفضناها.
+> - المرحلة B (ملفات Quran-Lab):
+>   - نموذج v3 الرسمي (مقطع 24) أسرع بنحو 22% بأربعة خيوط، ويتتبع كل الكلمات، ويؤكد 1:6 w1 في كل الملفات، ونظيف على مجموعة الثقة.
+>   - لكنه يرسب في شرط صارم واحد (كلمة جديدة ظهرت خطأ مؤقتًا)، ونهاية الآية عنده أبطأ قليلًا.
+>   - fp32 الرسمي أبطأ بلا فائدة. v3.1 أسوأ من v3 هنا. وتقصير الذاكرة (left 128/64) لا يسرّع، ويزيد الأخطاء الكاذبة.
 > - قياسات الجوال لم تُشغَّل بعد.
 >
 > لم يتغيّر أي إعداد افتراضي.
@@ -229,17 +233,75 @@ Gate-caused early means the gate fires before tilawa's own confirm (R0) **and** 
 - **Verdict:** none of these gates as designed delivers a safe gain. Why R1 helps so little (the eligibility condition, the "no new characters for N ms" condition, or the voicing test) is not diagnosed yet.
 - **Limits:** 5 maintainer files with no deliberately long madd. The trust ayah-end labels sit after the breath, which inflates the trust early counts. The sweep overfits.
 
+### Phase B: official Quran-Lab exports (desktop)
+
+Files: the maintainer downloaded them from the gated Quran-Lab repo (NPL-1.2). They are kept in `public/models/` only: git-ignored and not in `assets.json`.
+
+SHA-256:
+- `zipformer_p_arabic_v3.int8.onnx` `6a5ddafa9c5e5c01260d30264031b341785bdc152e9ef1d569b41c8c278508eb`
+- `zipformer_p_arabic_v3.onnx` (fp32) `65e5077932160ba9b5e4f418cf315d31dddf42210db4fea3113bf64359462cf2`
+- `zipformer_p_arabic_v3.1.int8.onnx` `31755836528da336a6192121cd7bc82cb41752dddb65566fd000b89c8686da6b`
+- `zipformer_p_arabic_v3.1_left128.int8.onnx` `9a27380054e814931216c2380d31b69a4ca6ea363e3ad65398dac3464f7111d4`
+- `zipformer_p_arabic_v3.1_left64.int8.onnx` `d9422b243050bfce3ccb56f603e925be6926e66376aecdf4273ea3e1ce6788e7`
+
+`inspect_model.py` results:
+- All five have T 61 (chunk 24, 480 ms step) and no encoder-frames output.
+- The int8 files are per-tensor QInt8, the same scheme as B2.
+- Left context: 256, except the two probe builds (128, 64).
+- Left context is baked into the cache shapes, so each file gets its own io manifest: `scripts/model/make_io.py`, loaded with `?io=`.
+
+Checks:
+- `make_io.py` reproduces the published a0w manifest exactly.
+- B2 settings with the a0w model and io = an A2 run, per word.
+- B2 with the c16 model and its generated io = the B2 baseline.
+
+Runs:
+- All `variant=B2` (correction mode + expected Fatiha), chunk 80 ms.
+- 3 interleaved maintainer runs and 1 trust run per config at t1 and t4: 48 runs, `results/20261011-1516*` to `-1543*`.
+- Every config's 3 maintainer runs are per-word identical.
+
+| Lever | Config vs reference | Speed t4 (maintainer, 3 runs) | Speed t1 | Maintainer set | Trust set | Verdict |
+|---|---|---|---|---|---|---|
+| S3 | **V3** = official v3 int8, chunk 24 vs B2 (c16) | **faster**: 70-73 vs 89-93 model ms per audio s; RTF 0.075-0.078 vs 0.095-0.099 | no measurable difference: 125-170 vs 153-187, noisy | 145/145 tracked (B2 143); 1:6 w1 confirmed in 5/5 files (B2 3/5); ever wrong: 4.aac 1:6 w3 is **new** (B2's 3 words gone at t1, 1 left at t4); ayah-end p50/p95 574/2040 vs 427/1878; first lock p50 +320 ms | **all guards pass**: 232/232, 0 wrong, interior 317/958 vs 335/1064 | **faster, fails one strict guard** (ever-wrong not a subset: 1 transient word, never final `wrong`) |
+| S2 | V3F = official v3 fp32 vs V3 | **slower**: model p50 38.7-39.0 vs 30.8-31.4 ms (+25 %) | no measurable difference | ≈ V3 (1-3 per-word differences) | identical to V3 | **slower, no accuracy gain** |
+| S4 | V31 left 128 / left 64 vs V31 (left 256) | no measurable difference | no measurable difference | 139/145 and 142/145 tracked, 9-10 and 6 ever wrong | 228 and 221/232 tracked, **4 and 10 words flagged wrong in correct readings** | **no speed gain, fails accuracy** |
+| model | V31 = v3.1 int8 vs V3 | no measurable difference | no measurable difference | 141/145; 1:6 w1 missed in 3.aac and 5.ogg; new ever-wrong 1:3 w1 in 1.aac/4.aac; ayah-end 648/2387 | 230/232, 2 words flagged wrong in correct readings (T5 1:3 w1, T7 1:6 w1) | **worse than v3 here** |
+
+Notes:
+- **(a) is two different exports** (halawanyAi c16 vs the official chunk-24 file). Both use the same quantization scheme, but the weights were not checked to be identical, so V3's tracking gain may come from the export rather than the chunk size.
+- **V3's costs:**
+  - The ayah-end confirm is later: p50 +147 ms, p95 +162 ms.
+  - First lock is later by one step.
+  - Both are within the one-step (480 ms) guard.
+- **Threads:**
+  - Like A2, V3, V31 and left128 give slightly different per-word results at t1 and t4 (2, 2 and 9 differences on the maintainer set).
+  - V3F, left64 and B2 do not.
+  - Every config gives the same results at t1 and t4 on the trust set.
+- **Left-context probe:**
+  - Correct readings get more `wrong` flags as the memory shrinks: 2, 4 and 10 words for left 256, 128 and 64.
+  - On the maintainer recordings these data cannot say which flags are real mistakes.
+- **Gate on V31 (t1):**
+  - Default rows: gate-caused early cases on the trust set, and mismatches on both sets.
+  - No sweep row passes on V31 trust.
+  - Extra, on V3: R3 rows pass on each set separately, but the best rows differ between the sets. The best maintainer row gives p95 2040 → 1733; the best trust row has a margin of only +6 ms. This is no evidence of a safe single setting.
+  - The R2 window and the sweep grid were picked for a 320 ms step.
+
 ### Not run yet
 - **Phone (Redmi Note 8):** every speed verdict above is desktop only. The phone kit (exact URLs and baselines `20261010-175959` / `-180617`) is in the plan's Task 10.
-- **Phase B** (gated Quran-Lab files): real fp32, chunk 24 with the same weights, left context 128/64, and v3.1. It waits for the download.
+- **Phase B on the phone:** V3 at the phone's thread count, on both sets (`?model=zipformer_p_arabic_v3.int8.onnx&io=zipformer_p_arabic_v3.int8.io.json`). This checks whether the desktop gain holds without SDOT.
 
 ### Recommendation (pending the maintainer's decision; no default was changed)
 1. **S1:**
    - Fix the production thread hang with ORT's own `.mjs`/`.wasm` (already behind the flag).
    - Lift the production 1-thread rule only after the phone runs (P2 on both sets) pass the guards.
-2. **Drop S2 (fp32)** on this evidence. If anything, check it once on the phone, since the phone lacks the dot-product instructions; the desktop says slower and 3.6× bigger.
-3. **Do not switch to a0w (A1).** It is faster per second of audio, but it loses tracking on the maintainer set and depends on the thread count. Phase B's chunk-24 test with B2's own weights is the cleaner way to get its speed.
-4. **Ayah-end:**
+2. **Drop S2 (fp32).** The dequantized B2 and the official v3 fp32 are both slower on the desktop, with no accuracy gain. If anything, check it once on the phone, since the phone lacks the dot-product instructions.
+3. **Do not switch to a0w (A1).** It is faster per second of audio, but it loses tracking on the maintainer set and depends on the thread count.
+4. **V3 (official v3 int8, chunk 24) is the one open candidate.** It is about 22 % less model time per audio second at t4, tracks better, has a clean trust set and confirms 1:6 w1 everywhere.
+   - It fails the strict "ever-wrong is a subset" guard by one transient word, and its ayah-end confirm is about 150 ms later.
+   - Adopting it is the maintainer's call, after a phone run.
+   - It would also need a license and hosting decision: the file is gated, and `assets.json` has no auth.
+5. **Drop v3.1 and the shorter left contexts** on this evidence: no speed gain, and more false `wrong` flags on correct readings.
+6. **Ayah-end:**
    - Keep `settleFrames` 25 and do not wire any gate.
    - Next step: find which condition holds R1 back, using the same logs. Also record a few readings with deliberately long madd before any further tuning.
 
