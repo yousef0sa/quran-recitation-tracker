@@ -335,6 +335,27 @@ describe("model stats", () => {
     expect(computeMetrics(log(cleanEntries()), labels, 30).modelMsPerAudioSec).toBeNull();
   });
 
+  it("modelMsPerAudioSec leaves out the zero-tail entries past the real audio; model p50/p95 keep them", () => {
+    const base = modelLog().entries;
+    const tail: EventLogEntry[] = [1, 2, 3].map((k) => ({ ...entry(10 + k, 0.8 + k * 0.08), modelMs: 6, modelRuns: 1 }));
+    const padded = log([...base.slice(0, -1), ...tail, base[base.length - 1] as EventLogEntry]);
+    const m = computeMetrics(padded, labels, 0.8);
+    expect(m.modelMsPerAudioSec).toBeCloseTo((8 + 8 * 6) / 0.8, 9); // the 3 tail runs (18 ms) are not counted
+    expect(m.model?.n).toBe(12); // per-run stats cover every non-flush entry
+    expect(m.audioDurationSec).toBeCloseTo(1.04, 9);
+    const a = padded;
+    const agg = aggregateMetrics([
+      { metrics: m, log: a },
+      { metrics: computeMetrics(a, labels, 0.8), log: a },
+    ]);
+    expect(agg.modelMsPerAudioSec).toBeCloseTo((2 * 56) / 1.6, 9);
+    expect(agg.model?.n).toBe(24);
+    // a recording that ends mid-chunk: the last real chunk (shorter) ends exactly at realAudioSec and still counts
+    const short = log([{ ...entry(0, 0.05), modelMs: 5, modelRuns: 1 }, { ...entry(1, 0.13), modelMs: 7, modelRuns: 1 }]);
+    expect(computeMetrics(short, labels, 0.05).modelMsPerAudioSec).toBeCloseTo(5 / 0.05, 9);
+    expect(computeMetrics(short, labels, 0.13).modelMsPerAudioSec).toBeCloseTo(12 / 0.13, 9);
+  });
+
   it("older logs have no model stats", () => {
     const m = computeMetrics(log(cleanEntries()), labels);
     expect(m.model).toBeNull();

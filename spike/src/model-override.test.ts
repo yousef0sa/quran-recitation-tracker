@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ioFileSuffix, modelFileSuffix, parseIoName, parseModelName } from "./model-override";
+import { ioFileSuffix, modelFileSuffix, overrideAssetPaths, parseIoName, parseModelName } from "./model-override";
 
 describe("parseModelName", () => {
   it("accepts a plain model file name", () => {
@@ -56,6 +56,24 @@ describe("parseIoName", () => {
   it("accepts a 96-character base name and rejects 97", () => {
     expect(parseIoName(`${"a".repeat(96)}.io.json`)).toBe(`${"a".repeat(96)}.io.json`);
     expect(parseIoName(`${"a".repeat(97)}.io.json`)).toBeNull();
+  });
+});
+
+describe("overrideAssetPaths (the worker's own check of an init message)", () => {
+  it("maps valid names to paths under models/ and leaves absent names null", () => {
+    expect(overrideAssetPaths(undefined, undefined)).toEqual({ modelPath: null, ioPath: null });
+    expect(overrideAssetPaths("a.int8.onnx", undefined)).toEqual({ modelPath: "models/a.int8.onnx", ioPath: null });
+    expect(overrideAssetPaths("a.onnx", "a.io.json")).toEqual({ modelPath: "models/a.onnx", ioPath: "models/a.io.json" });
+  });
+
+  it("throws on a name that escapes models/ or has the wrong type, even an empty one", () => {
+    for (const bad of ["../index.html", "../x.onnx", "//evil.example/x.onnx", "http://evil.example/x.onnx", "a/b.onnx", "", "x.json"]) {
+      expect(() => overrideAssetPaths(bad, undefined)).toThrow(/invalid model name/);
+    }
+    for (const bad of ["../index.html", "../x.io.json", "a/b.io.json", "", "x.onnx"]) {
+      expect(() => overrideAssetPaths(undefined, bad)).toThrow(/invalid io name/);
+    }
+    expect(() => overrideAssetPaths("a.onnx", "../index.html")).toThrow(/invalid io name/);
   });
 });
 
