@@ -8,6 +8,7 @@ import {
   type CorrectionAction,
   type CorrectionState,
   type WorkerOutbound,
+  type ZipformerIo,
   type ZipformerSession,
 } from "@tilawa/core";
 import type { EngineOverride } from "./engine-config";
@@ -101,6 +102,7 @@ async function initSession(
   engine: EngineOverride = {},
   threads: Threads = DEFAULT_THREADS,
   modelName?: string,
+  ioName?: string,
 ): Promise<void> {
   const started = performance.now();
   session = null;
@@ -117,9 +119,14 @@ async function initSession(
   ort.env.wasm.simd = true;
   if (import.meta.env.VITE_EXPERIMENT_PROD_THREADS === "1") await useExternalOrtWasm();
 
-  // `?model=` (bench only) replaces the variant's model file; the variant's io still applies.
+  // `?model=` (bench only) replaces the variant's model file; the variant's io still applies unless `?io=` names a manifest.
   const modelPath = modelName === undefined ? variant.modelPath : `models/${modelName}`;
-  const [model, corpus] = await Promise.all([fetchModel(modelPath), fetchJson(CORPUS_PATH)]);
+  const ioPath = ioName === undefined ? null : `models/${ioName}`;
+  const [model, corpus, ioManifest] = await Promise.all([
+    fetchModel(modelPath),
+    fetchJson(CORPUS_PATH),
+    ioPath === null ? null : fetchJson(ioPath),
+  ]);
   // The session is created here (tilawa's own options) so each run can be timed and its posteriors read.
   const wrapper = await createTimedSession(ort as unknown as OrtForSession, model);
   const created = await createZipformerSession({
@@ -128,7 +135,7 @@ async function initSession(
     corpus,
     stayOnSurah: true,
     structural: false,
-    ...(variant.io ? { io: applyIoOverride(DEFAULT_ZIPFORMER_IO, variant.io) } : {}),
+    ...(ioManifest ? { io: ioManifest as ZipformerIo } : variant.io ? { io: applyIoOverride(DEFAULT_ZIPFORMER_IO, variant.io) } : {}),
     // Omitted when empty, so a run without overrides takes the same code path as before this option existed.
     ...(Object.keys(engine).length > 0 ? { config: engine } : {}),
   });
@@ -151,6 +158,7 @@ async function initSession(
     threads: effective,
     crossOriginIsolated: isolated,
     modelPath,
+    ioPath,
   });
 }
 
@@ -264,7 +272,7 @@ async function handleStop(): Promise<void> {
 function handle(message: MainToWorker): Promise<void> {
   switch (message.type) {
     case "init":
-      return initSession(message.variant, message.engine, message.threads, message.model).catch((err: unknown) => {
+      return initSession(message.variant, message.engine, message.threads, message.model, message.io).catch((err: unknown) => {
         session = null;
         timed = null;
         post({ type: "error", stage: "load", message: loadMessage(err) });

@@ -10,7 +10,7 @@ export type MainToWorker =
    * `engine` is the bench's optional tilawa override; absent or empty means tilawa's defaults. `threads` is the requested WASM thread count (default 1).
    * `model` is the bench's `?model=<name>.onnx` (a file in models/, loaded with the variant's io); absent means the variant's own model.
    */
-  | { type: "init"; variant: VariantId; engine?: EngineOverride; threads?: Threads; model?: string }
+  | { type: "init"; variant: VariantId; engine?: EngineOverride; threads?: Threads; model?: string; io?: string }
   | { type: "audio"; chunkId: number; samples: Float32Array }
   | { type: "stop" }
   | { type: "reset" };
@@ -30,6 +30,8 @@ export type WorkerToMain =
       crossOriginIsolated: boolean;
       /** Model path actually loaded (under the site root), e.g. "models/x.onnx". */
       modelPath: string;
+      /** io manifest loaded with `init.io` (under the site root); null when the variant's own io applies. */
+      ioPath: string | null;
     }
   /** Acknowledges {type:"reset"}; a failed reset posts an error instead. */
   | { type: "resetDone" }

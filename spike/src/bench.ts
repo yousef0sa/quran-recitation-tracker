@@ -20,7 +20,7 @@ import {
 } from "./common";
 import { engineOverrideFrom, parseSettleFrames, type EngineOverride } from "./engine-config";
 import { WORD_COUNT } from "./fatiha";
-import { parseModelName } from "./model-override";
+import { parseIoName, parseModelName } from "./model-override";
 import { parseLabels, type Labels } from "./labels";
 import {
   aggregateMetrics,
@@ -66,6 +66,8 @@ interface RunResult {
   engineConfig: EngineOverride;
   /** Model file the worker loaded (path under the site root); null until `ready`. With `?model=` it is `models/<name>`. */
   modelPath: string | null;
+  /** io manifest the worker loaded with `?io=` (path under the site root); null without one or until `ready`. */
+  ioPath: string | null;
   backend: string;
   /** WASM threads asked for (`?threads=`), what the worker really used (null until `ready`), and whether the page was cross-origin isolated. */
   requestedThreads: Threads;
@@ -135,6 +137,17 @@ const modelIgnoredNote =
     ? `قيمة model غير صالحة (${modelParam}): استُخدم نموذج النسخة / invalid model ignored, the variant's model used`
     : null;
 
+/**
+ * `?io=<name>.io.json` (bench only): a tilawa io manifest in models/ (scripts/model/make_io.py) used instead of the variant's io,
+ * needed when `?model=` is another export (other T, hop or left context). A bad value is noted and the variant's io used.
+ */
+const ioParam = new URLSearchParams(location.search).get("io");
+const ioOverride = parseIoName(ioParam);
+const ioIgnoredNote =
+  ioParam !== null && ioOverride === null
+    ? `قيمة io غير صالحة (${ioParam}): استُخدم io النسخة / invalid io ignored, the variant's io used`
+    : null;
+
 /** " | settleFrames=12" when an override is set, else "". */
 function engineLabel(engine: EngineOverride): string {
   return engine.settleFrames === undefined ? "" : ` | settleFrames=${engine.settleFrames}`;
@@ -198,7 +211,7 @@ function render(result: RunResult): void {
   output.replaceChildren();
   output.append(
     para(
-      `${result.variant} | chunk ${result.chunkMs} ms${engineLabel(result.engineConfig)}${modelOverride === null ? "" : ` | model ${modelOverride}`} | ${result.backend}${threadsLabel(result)} | cores ${result.hardwareConcurrency} | load ${formatMs(result.loadMs)} ms`,
+      `${result.variant} | chunk ${result.chunkMs} ms${engineLabel(result.engineConfig)}${modelOverride === null ? "" : ` | model ${modelOverride}`}${ioOverride === null ? "" : ` | io ${ioOverride}`} | ${result.backend}${threadsLabel(result)} | cores ${result.hardwareConcurrency} | load ${formatMs(result.loadMs)} ms`,
       "note ltr",
     ),
   );
@@ -340,6 +353,7 @@ async function run(recordings: File[], labelFiles: File[]): Promise<RunResult | 
     chunkMs,
     engineConfig: engineOverride,
     modelPath: null,
+    ioPath: null,
     backend: backendLabel(requestedThreads),
     requestedThreads,
     threads: null,
@@ -359,6 +373,7 @@ async function run(recordings: File[], labelFiles: File[]): Promise<RunResult | 
   result.skipped.push(...problems);
   if (settleIgnoredNote) result.skipped.push(settleIgnoredNote);
   if (modelIgnoredNote) result.skipped.push(modelIgnoredNote);
+  if (ioIgnoredNote) result.skipped.push(ioIgnoredNote);
   if (threadsIgnoredNote) result.skipped.push(threadsIgnoredNote);
 
   let issues: IssueRecord[] = [];
@@ -381,12 +396,14 @@ async function run(recordings: File[], labelFiles: File[]): Promise<RunResult | 
       engine: engineOverride,
       threads: requestedThreads,
       ...(modelOverride === null ? {} : { model: modelOverride }),
+      ...(ioOverride === null ? {} : { io: ioOverride }),
     });
     const readyMessage = await ready;
     result.loadMs = readyMessage.loadMs;
     result.engineConfig = readyMessage.engine; // what the worker really applied
     result.threads = readyMessage.threads;
     result.modelPath = readyMessage.modelPath;
+    result.ioPath = readyMessage.ioPath;
     result.crossOriginIsolated = readyMessage.crossOriginIsolated;
     result.backend = backendLabel(readyMessage.threads);
 
@@ -443,7 +460,7 @@ async function run(recordings: File[], labelFiles: File[]): Promise<RunResult | 
     }
     setStatus(
       result.files.length > 0
-        ? `اكتمل: ${result.files.length} ملف (${variantId}، ${chunkMs} ms${result.engineConfig.settleFrames === undefined ? "" : `، settleFrames=${result.engineConfig.settleFrames}`}${modelOverride === null ? "" : `، model=${modelOverride}`}${threadsStatusPart(result.threads)}).`
+        ? `اكتمل: ${result.files.length} ملف (${variantId}، ${chunkMs} ms${result.engineConfig.settleFrames === undefined ? "" : `، settleFrames=${result.engineConfig.settleFrames}`}${modelOverride === null ? "" : `، model=${modelOverride}`}${ioOverride === null ? "" : `، io=${ioOverride}`}${threadsStatusPart(result.threads)}).`
         : "لم يُعالَج أي ملف: تأكد من مطابقة أسماء ملفات التعليم.",
       result.files.length === 0,
     );
@@ -480,6 +497,7 @@ function logsJson(result: RunResult): unknown {
     chunkMs: result.chunkMs,
     engineConfig: result.engineConfig,
     modelPath: result.modelPath,
+    ioPath: result.ioPath,
     backend: result.backend,
     requestedThreads: result.requestedThreads,
     threads: result.threads,
@@ -496,6 +514,7 @@ function summaryJson(result: RunResult) {
     chunkMs: result.chunkMs,
     engineConfig: result.engineConfig,
     modelPath: result.modelPath,
+    ioPath: result.ioPath,
     backend: result.backend,
     requestedThreads: result.requestedThreads,
     threads: result.threads,
