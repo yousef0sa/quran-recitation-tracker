@@ -49,6 +49,19 @@ describe("defaultThreads", () => {
     expect(requestThreads("2", desktop, false)).toBe(1);
   });
 
+  it("requestThreads with the production experiment flag behaves like the dev server", () => {
+    expect(requestThreads(null, android, false, true)).toBe(4);
+    expect(requestThreads("4", desktop, false, true)).toBe(4);
+    expect(requestThreads("2", desktop, false, true)).toBe(2);
+    expect(requestThreads("3", desktop, false, true)).toBe(1);
+    expect(requestThreads(null, desktop, false, true)).toBe(1);
+  });
+
+  it("requestThreads has the production experiment flag off by default", () => {
+    expect(requestThreads("4", desktop, false)).toBe(1);
+    expect(requestThreads("4", desktop, false, false)).toBe(1);
+  });
+
   it("is the fallback of parseThreads", () => {
     expect(parseThreads(null, PHONE_THREADS)).toBe(4);
     expect(parseThreads("3", PHONE_THREADS)).toBe(4);

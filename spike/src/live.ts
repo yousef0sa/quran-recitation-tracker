@@ -20,7 +20,12 @@ import { backendLabel, requestThreads } from "./wasm-threads";
 
 const query = new URLSearchParams(location.search);
 const chunkMs = parseChunkMs(query.get("chunk"));
-const requestedThreads = requestThreads(query.get("threads"), navigator.userAgent, import.meta.env.DEV);
+const requestedThreads = requestThreads(
+  query.get("threads"),
+  navigator.userAgent,
+  import.meta.env.DEV,
+  import.meta.env.VITE_EXPERIMENT_PROD_THREADS === "1",
+);
 
 const variantSelect = el<HTMLSelectElement>("variant");
 const variantId = initVariantSelect(variantSelect);

@@ -29,7 +29,7 @@ Other commands: `npm run typecheck`, `npm test`, `npm run build`.
 
 Run the dev server on loopback only: never a bare `--host`, a LAN address or a non-loopback `server.host` (`--host 127.0.0.1` is loopback and fine). The dev-only `/__dev/` harness serves your recordings and writes label and result files, so it refuses to start on a non-loopback host.
 
-The dev and preview servers send `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp` on every response (`vite.config.ts`), so the pages are cross-origin isolated: ONNX Runtime needs SharedArrayBuffer for more than 1 WASM thread, and falls back to 1 without it. A browser that cached the pages before these headers may stay non-isolated: clear its cache for the site. In a production build (`vite preview`) more than 1 thread hangs at load (see `RESULTS.md`, follow-up 2), so a production build always uses 1 thread, whatever `?threads=` says.
+The dev and preview servers send `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp` on every response (`vite.config.ts`), so the pages are cross-origin isolated: ONNX Runtime needs SharedArrayBuffer for more than 1 WASM thread, and falls back to 1 without it. A browser that cached the pages before these headers may stay non-isolated: clear its cache for the site. In a production build (`vite preview`) more than 1 thread hangs at load (see `RESULTS.md`, follow-up 2), so a production build always uses 1 thread, whatever `?threads=` says. Test-only exception: a local build made with `VITE_EXPERIMENT_PROD_THREADS=1` (e.g. `VITE_EXPERIMENT_PROD_THREADS=1 npm run build`, then `npx vite preview --host 127.0.0.1`) honours `?threads=` and loads ONNX Runtime's threaded `.mjs`/`.wasm` from their own asset URLs; the default build is unchanged (1 thread).
 
 On an Android phone over USB (no LAN): start the server with `npm run dev -- --host 127.0.0.1 --port 5174 --strictPort` (the default listens on `[::1]`, which `adb reverse` cannot reach), run `adb reverse tcp:5174 tcp:5174`, and open `http://localhost:5174/` in Chrome on the phone (a secure context, so isolation works without HTTPS). To start a bench from the PC, quote the whole command for the device shell so `&` is not split: `adb shell "am start -a android.intent.action.VIEW -d 'http://localhost:5174/bench.html?autorun=1&variant=B2&chunk=80&threads=4' com.android.chrome"`.
 
@@ -77,6 +77,20 @@ Engine override and verdict log:
 - `bench.html?settle=<1..200>` overrides tilawa's `settleFrames` (default 25 frames = 1 s at 25 Hz; the engine decodes 8 frames per 320 ms step, so it acts in whole steps). It is read from the URL only (no control on the page, not on the live page); an invalid value falls back to the default and is noted in the run, and the dev autorun (`?autorun=1&variant=B2&chunk=80&settle=12`) rejects it with an error. The value actually applied is recorded as `engineConfig` in the results and EventLog JSON (`{}` = defaults) and shown in the page header; dev autorun result files get a `_settle<n>` part (`<time>_B2_80ms_settle12_results.json`).
 - `bench.html?threads=1|2|4` sets the WASM thread count (default 4 on a phone, else 1; invalid falls back to that default with a note, the dev autorun rejects it). The results, summary and EventLog JSON record `requestedThreads`, `threads` (what ONNX Runtime really used) and `crossOriginIsolated`; labels and file names use the effective count: dev autorun files get `_t<n>` (`<time>_B2_80ms_t4_results.json`), and a run that fell back gets `_req<N>` and ends as an error.
 - Each EventLog entry may carry `verdicts`: the full Al-Fatiha tilawa verdict list (`w` global word index 0-28, `s` state `ok|unsure|wrong|skipped|pending`, `d` distance, `h` heard ratio, `m` margin), written only when it differs from the previous entry's. An empty list means tilawa went back to search. The final entry (`flush`) always has one. Older logs have no `verdicts`.
+- `bench.html?model=<name>.onnx` (bench only) loads `public/models/<name>.onnx` instead of the variant's model, keeping the variant's I/O settings.
+  - The name is a plain file name: no slashes, no leading dot, no `..`.
+  - An invalid value falls back to the variant's model with a note, and the dev autorun rejects it.
+  - The results record `modelPath`, and dev autorun files get `_m<name>`.
+- Each EventLog entry also carries:
+  - `modelMs` / `modelRuns`: the model's own share of `feed()`, timed by a wrapper around the ORT session;
+  - `ctc {blank, top}`: the mean blank probability and the highest non-blank probability of that chunk's model steps;
+  - `voice {rmsDb, clarity, f0}`: the chunk's voicing (McLeod pitch), `null` for the zero tail;
+  - `voiceMs`: kept out of `computeMs`.
+
+  The results add `model` (per model step) and `modelMsPerAudioSec`.
+- `node scripts/compare-runs.ts <a_results> <a_logs> <b_results> <b_logs> [--allow-state-flips N]` diffs two runs word by word (confirm/cursor times, final verdict states, false alarms, issues, restarts, first lock) over the files they share. It exits 1 on any difference.
+- `node scripts/ayah-end-gate.ts <results> <eventlogs> [--sweep] [--param K=V]` simulates, offline, an earlier confirm of ayah-end words when the reciter has stopped: voicing (R1), CTC blank probability (R2), or both (R3). It reports gate-caused early greens, verdict mismatches and the closest call. It changes nothing on the live page.
+- `scripts/model/` holds Python tools (venv outside the repo, see its README): op counts and quantization scheme of a model, and int8 → fp32 dequantization. Outputs stay in the git-ignored `public/models/`.
 - `node scripts/verdict-report.ts <results.json> <eventlogs.json> [--word 1:6:1 ...]` (Node 22.18+ or newer, which strips types by default) prints the per-word confirm table, ayah-end / interior latency, every word whose verdict was ever `wrong` or `skipped` (with all-correct recordings these are false alarms), and a timeline of the verdicts, cursor and verse events for each `--word <surah>:<ayah>:<word in ayah, 1-based>`. It prints positions and numbers only, never text.
 
 What the columns mean:
@@ -100,5 +114,7 @@ See `RESULTS.md`.
 
 - `src/fatiha.ts` word table and mappings; `src/metrics.ts` latency/accuracy; `src/labels.ts` label format; `src/resample.ts` + `public/audio-processor.js` 16 kHz resampling (keep in sync); `src/tracker.worker.ts` model session; `src/tracker-client.ts`, `src/progress.ts`, `src/common.ts` page helpers.
 - `src/engine-config.ts` bench-only tilawa override (`?settle=`); `scripts/verdict-report.ts` offline report on a results + EventLog pair.
+- `src/model-session.ts` timed ORT session (model time, CTC posteriors); `src/model-override.ts` bench-only `?model=`; `src/voicing.ts` per-chunk voicing.
+- `scripts/compare-runs.ts` diffs two runs; `scripts/ayah-end-gate.ts` simulates an earlier ayah-end confirm; `scripts/model/` model inspection and dequantization (Python).
 - `scripts/assets.json` is the only place with asset URLs and hashes; `src/variants.ts` is the only place with variant settings.
 - Display text is tilawa's plain Uthmani, temporary until the KFGQPC text is integrated.
