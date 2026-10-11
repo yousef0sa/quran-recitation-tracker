@@ -331,7 +331,8 @@ Controls:
 ### Recommendation (pending the maintainer's decision; no default was changed)
 1. **S1:**
    - Fix the production thread hang with ORT's own `.mjs`/`.wasm` (already behind the flag).
-   - The phone runs now pass: P2 on both sets, and the flagged build runs 4 threads on the phone. **The 1-thread production rule can be lifted** (make the flag the default) if the maintainer agrees.
+   - The phone runs now pass: P2 on both sets, and the flagged build runs 4 threads on the phone.
+   - **Maintainer's decision (2026-10-11): adopted.** The production build now uses 4 threads on phones and 1 on desktop, and `?threads=` works there too. The flag is removed, and ORT's own threaded files load in every production build. The maintainer tried the production live page on the phone, and it works.
 2. **Drop S2 (fp32).** The dequantized B2 and the official v3 fp32 are both slower on the desktop, with no accuracy gain, and the fp32 file does not even load on the phone.
 3. **Do not switch to a0w (A1).** It is faster per second of audio, but it loses tracking on the maintainer set and depends on the thread count.
 4. **V3 (official v3 int8, chunk 24) is the one open candidate.** It is about 22 % less model time per audio second at t4, tracks better, has a clean trust set and confirms 1:6 w1 everywhere.

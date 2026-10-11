@@ -3,7 +3,7 @@
 export const THREAD_OPTIONS = [1, 2, 4] as const;
 export type Threads = (typeof THREAD_OPTIONS)[number];
 export const DEFAULT_THREADS: Threads = 1;
-/** Phones default to 4: single-thread B2 is slower than real time on a mid-range phone (RESULTS.md, follow-up 2). Provisional. */
+/** Phones default to 4: single-thread B2 is slower than real time on a mid-range phone (RESULTS.md, follow-up 2). Decided by the maintainer 2026-10-11 after the phone runs (RESULTS.md, follow-up 6). */
 export const PHONE_THREADS: Threads = 4;
 
 /** PHONE_THREADS on a phone (by user agent), else DEFAULT_THREADS. */
@@ -11,18 +11,9 @@ export function defaultThreads(userAgent: string): Threads {
   return /Android|iPhone|iPod|Mobile/i.test(userAgent) ? PHONE_THREADS : DEFAULT_THREADS;
 }
 
-/**
- * Thread count to request: `?threads=` or the device default on the dev server.
- * A production build always uses 1, whatever `?threads=` says: more than 1 hangs at load there (RESULTS.md, follow-up 2).
- * Test-only exception: a local build made with VITE_EXPERIMENT_PROD_THREADS=1 (`prodThreadsExperiment`) behaves like the dev server.
- */
-export function requestThreads(
-  value: string | null,
-  userAgent: string,
-  devServer: boolean,
-  prodThreadsExperiment = false,
-): Threads {
-  return devServer || prodThreadsExperiment ? parseThreads(value, defaultThreads(userAgent)) : DEFAULT_THREADS;
+/** Thread count to request: `?threads=` or the device default (dev server and production build alike). */
+export function requestThreads(value: string | null, userAgent: string): Threads {
+  return parseThreads(value, defaultThreads(userAgent));
 }
 
 /** `?threads=1|2|4`; anything else falls back to `fallback` (the device default). */

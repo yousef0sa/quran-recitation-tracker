@@ -17,7 +17,6 @@ import { toGlobalWordIndex } from "./fatiha";
 import type { CompactVerdict } from "./metrics";
 import { overrideAssetPaths } from "./model-override";
 import { createTimedSession, type OrtForSession, type TimedSession } from "./model-session";
-// Real only in VITE_EXPERIMENT_PROD_THREADS=1 builds; vite.config.ts swaps in ort-external-off.ts otherwise (see ort-external.ts).
 import { useExternalOrtWasm } from "./ort-external";
 import { CORPUS_PATH, VARIANTS, applyIoOverride, type VariantId } from "./variants";
 import { DEFAULT_THREADS, type Threads } from "./wasm-threads";
@@ -107,7 +106,8 @@ async function initSession(
   if (!isolated && threads > 1) console.warn("[spike] not cross-origin isolated: using 1 thread", { requested: threads });
   ort.env.wasm.numThreads = isolated ? threads : 1;
   ort.env.wasm.simd = true;
-  if (import.meta.env.VITE_EXPERIMENT_PROD_THREADS === "1") await useExternalOrtWasm();
+  // Production builds load ORT's threaded files from their own asset URLs; the dev server keeps ORT's default loading.
+  if (!import.meta.env.DEV) await useExternalOrtWasm();
 
   // `?model=` (bench only) replaces the variant's model file; the variant's io still applies unless `?io=` names a manifest.
   // The names are checked again here: the worker takes them from a message, not from the page's own validation.

@@ -112,19 +112,13 @@ const settleIgnoredNote =
     ? `قيمة settle غير صالحة (${settleParam}): استُخدمت قيمة tilawa الافتراضية / invalid settle ignored, tilawa default used`
     : null;
 
-/**
- * `?threads=`: absent or invalid uses the device default (4 on a phone, else 1); a production build always uses 1,
- * except a local test build made with VITE_EXPERIMENT_PROD_THREADS=1. An ignored value is noted in the run.
- */
-const prodThreadsExperiment = import.meta.env.VITE_EXPERIMENT_PROD_THREADS === "1";
+/** `?threads=`: absent or invalid uses the device default (4 on a phone, else 1). An ignored value is noted in the run. */
 const threadsParam = new URLSearchParams(location.search).get("threads");
-const requestedThreads = requestThreads(threadsParam, navigator.userAgent, import.meta.env.DEV, prodThreadsExperiment);
+const requestedThreads = requestThreads(threadsParam, navigator.userAgent);
 const threadsIgnoredNote =
   threadsParam === null || String(requestedThreads) === threadsParam
     ? null
-    : import.meta.env.DEV || prodThreadsExperiment
-      ? `قيمة threads غير صالحة (${threadsParam}): استُخدم العدد الافتراضي ${requestedThreads} / invalid threads ignored, default ${requestedThreads} used`
-      : `نسخة البناء تعمل بخيط واحد، تجوهلت threads=${threadsParam} / production build runs 1 thread (only a VITE_EXPERIMENT_PROD_THREADS=1 test build honours threads), threads=${threadsParam} ignored`;
+    : `قيمة threads غير صالحة (${threadsParam}): استُخدم العدد الافتراضي ${requestedThreads} / invalid threads ignored, default ${requestedThreads} used`;
 
 /**
  * `?model=<name>.onnx` (bench only): a file in models/ used instead of the variant's model, with the variant's io.
