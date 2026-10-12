@@ -199,6 +199,24 @@ describe("input checks (fileProblems)", () => {
     expect(fileProblems("logs", { files: [{ log: { entries: [] } }] })).toEqual(['files[0] has no "recording" name']);
   });
 
+  // finalStates and everWrongOrSkipped read `w` (number) and `s` (string) of each verdict; d, h, m are never read.
+  it.each([
+    ["a null verdict", [null]],
+    ["a non-object verdict", [3]],
+    ["a verdict without w", [{ s: "ok" }]],
+    ["a verdict with a non-numeric w", [{ w: "1", s: "ok" }]],
+    ["a verdict without s", [{ w: 1 }]],
+    ["verdicts that is not an array", {}],
+  ])("rejects log entries with %s", (_label, verdicts) => {
+    const logs = { files: [{ recording: "1.aac", log: { entries: [{ chunkId: 1, audioTimeSec: 0.1, verdicts }] } }] };
+    expect(fileProblems("logs", logs)).toEqual(['1.aac: bad "verdicts" in log.entries[0]']);
+  });
+
+  it("accepts entries with no verdicts, null verdicts, an empty list, and verdicts without d, h, m", () => {
+    const entries = [{ chunkId: 1, audioTimeSec: 0.1 }, { chunkId: 2, audioTimeSec: 0.2, verdicts: null }, { chunkId: 3, audioTimeSec: 0.3, verdicts: [] }, { chunkId: 4, audioTimeSec: 0.4, verdicts: [{ w: 0, s: "ok" }] }];
+    expect(fileProblems("logs", { files: [{ recording: "1.aac", log: { entries } }] })).toEqual([]);
+  });
+
   it("lists each duplicate recording name once, in results and in logs", () => {
     const twice = run({ "1.aac": {}, "2.aac": {} });
     const results = { files: [...twice.results.files, ...twice.results.files, twice.results.files[0]] };
@@ -246,6 +264,14 @@ describe("command line: bad input exits 2, a difference exits 1", () => {
     const r = cli(...paths);
     expect(r.code).toBe(2);
     expect(r.err).toContain(message);
+    expect(r.err).not.toContain("TypeError");
+  });
+
+  it("exits 2, not 1 or a stack trace, for malformed verdicts in a logs file", () => {
+    const bad = { files: [{ recording: "1.aac", log: { entries: [{ chunkId: 1, audioTimeSec: 0.1, verdicts: [null] }] } }] };
+    const r = cli(...base, base[0], write("null_verdict_logs.json", bad));
+    expect(r.code).toBe(2);
+    expect(r.err).toContain('bad "verdicts" in log.entries[0]');
     expect(r.err).not.toContain("TypeError");
   });
 

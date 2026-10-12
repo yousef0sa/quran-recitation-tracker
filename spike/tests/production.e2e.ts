@@ -2,17 +2,22 @@
 // Guards the threaded ORT loading of src/ort-external.ts: a build that loads ORT's default files starts no pthread
 // workers and the model never gets ready (the hang), or runs on 1 thread. The build goes to a temp dir with the
 // default model and the corpus copied in (no other model, no recordings); the dev harness is not part of a build.
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, test } from "@e2e-dev/web";
 import type { Browser } from "@e2e-dev/web";
 import { expect } from "e2e";
 import { build, preview, type PreviewServer } from "vite";
-import { NO_ASSETS, blockDevWrites, hasAssets, installFakeMic } from "./fixtures";
+import { NO_ASSETS, blockDevWrites, installFakeMic } from "./fixtures";
 
 const MODEL_READY = 60_000; // WASM model load, cold cache
 const ASSETS = ["audio-processor.js", "data/zipformer_quran.json", "models/zipformer_p_arabic_v3_c16.int8.onnx"];
+
+// Only this suite's own files: fixtures' hasAssets() also needs the a0w model, which the production build does not use.
+function hasProductionAssets(): boolean {
+  return ASSETS.every((asset) => existsSync(resolve("public", asset)));
+}
 
 let outDir = "";
 let isolated: PreviewServer | undefined; // the project's vite.config.ts: COOP/COEP headers
@@ -26,7 +31,7 @@ function origin(server: PreviewServer): string {
 
 describe("production build", () => {
   beforeAll(async () => {
-    if (!hasAssets()) return;
+    if (!hasProductionAssets()) return;
     outDir = mkdtempSync(join(tmpdir(), "spike-prod-"));
     await build({ root: resolve("."), configFile: resolve("vite.config.ts"), mode: "production", logLevel: "silent", publicDir: false, build: { outDir, emptyOutDir: true } });
     for (const asset of ASSETS) {
@@ -55,7 +60,7 @@ describe("production build", () => {
   }
 
   test("?threads=4 runs the model on 4 threads", async ({ screen, browser }) => {
-    test.skip(!hasAssets(), NO_ASSETS);
+    test.skip(!hasProductionAssets(), NO_ASSETS);
     await open(browser, isolated, "?threads=4");
     // A build that cannot start its pthread workers never gets here.
     await expect(screen.getByRole("status")).toContainText("النموذج جاهز", { timeout: MODEL_READY });
@@ -65,7 +70,7 @@ describe("production build", () => {
   });
 
   test("without cross-origin isolation ?threads=4 falls back to 1 thread and still gets ready", async ({ screen, browser }) => {
-    test.skip(!hasAssets(), NO_ASSETS);
+    test.skip(!hasProductionAssets(), NO_ASSETS);
     await open(browser, plain, "?threads=4");
     await expect(screen.getByRole("status")).toContainText("النموذج جاهز", { timeout: MODEL_READY });
     expect(await browser.evaluate(() => self.crossOriginIsolated)).toBe(false);
