@@ -239,6 +239,15 @@ export function fileProblems(kind: "results" | "logs", json: unknown): string[] 
     } else {
       const entries = isObject(f.log) ? f.log.entries : undefined;
       if (!Array.isArray(entries) || !entries.every(isObject)) problems.push(`${name}: no "log.entries" array`);
+      else {
+        // finalStates and everWrongOrSkipped read only `w` and `s` of a verdict; a missing or null list is tolerated.
+        entries.forEach((entry, j) => {
+          const verdicts = (entry as Record<string, unknown>).verdicts;
+          if (verdicts === undefined || verdicts === null) return;
+          const ok = Array.isArray(verdicts) && verdicts.every((x) => isObject(x) && typeof x.w === "number" && typeof x.s === "string");
+          if (!ok) problems.push(`${name}: bad "verdicts" in log.entries[${j}]`);
+        });
+      }
     }
   });
   const dup = duplicates(names);
